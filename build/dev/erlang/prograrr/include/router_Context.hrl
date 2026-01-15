@@ -1,0 +1,1 @@
+-record(context, {config :: config:config(), static_dir :: binary()}).

@@ -1,4 +1,4 @@
-name = "pulsearr"
+name = "prograrr"
 version = "1.0.0"
 description = "Media request tracker with Jellyseerr, Sonarr, Radarr, and qBittorrent integration"
 target = "erlang"

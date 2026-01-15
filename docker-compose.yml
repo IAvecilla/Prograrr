@@ -1,7 +1,7 @@
 services:
-  request-tracker:
+  prograrr:
     build: .
-    container_name: request-tracker
+    container_name: prograrr
     environment:
       - TZ=${TIMEZONE}
       - PORT=3000
@@ -17,3 +17,9 @@ services:
     ports:
       - "3000:3000"
     restart: unless-stopped
+    networks:
+      - media_repo_default
+
+networks:
+  media_repo_default:
+    external: true

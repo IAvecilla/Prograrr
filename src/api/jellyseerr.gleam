@@ -1,5 +1,6 @@
 import api/http_client
 import gleam/dynamic/decode
+import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
@@ -71,7 +72,7 @@ fn get_media_details(
   media_type: String,
   tmdb_id: Int,
 ) -> Result(JellyseerrMedia, JellyseerrError) {
-  let url = base_url <> "/api/v1/" <> media_type <> "/" <> int_to_string(tmdb_id)
+  let url = base_url <> "/api/v1/" <> media_type <> "/" <> int.to_string(tmdb_id)
   let headers = [#("X-Api-Key", api_key), #("Accept", "application/json")]
 
   case http_client.get(url, headers) {
@@ -167,10 +168,4 @@ fn basic_media_decoder() -> decode.Decoder(JellyseerrMedia) {
     release_date: None,
     first_air_date: None,
   ))
-}
-
-import gleam/int
-
-fn int_to_string(n: Int) -> String {
-  int.to_string(n)
 }

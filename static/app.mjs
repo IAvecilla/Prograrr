@@ -1,4 +1,4 @@
-// Media Request Tracker - Frontend Application
+// Prograrr - Frontend Application
 
 // State
 let state = {
@@ -78,7 +78,7 @@ function renderHeader() {
   return `
     <header class="header">
       <div class="header-content">
-        <h1 class="logo">Media Tracker</h1>
+        <h1 class="logo">Prograrr</h1>
         <p class="subtitle">Track your download progress</p>
       </div>
     </header>

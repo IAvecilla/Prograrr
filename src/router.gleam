@@ -1,11 +1,14 @@
 import api/aggregator
 import api/arr
+import api/http_client
 import api/jellyseerr
 import api/qbittorrent
 import config.{type Config}
 import cors_builder as cors
 import gleam/http.{Get, Options}
 import gleam/json
+import gleam/list
+import gleam/string
 import gleam/string_tree
 import models/request
 import simplifile
@@ -30,14 +33,11 @@ pub fn handle_request(req: Request, ctx: Context) -> Response {
     ["api", "requests"] -> handle_requests(req, ctx)
     ["api", "health"] -> handle_health(req)
     ["api", "debug"] -> handle_debug(req, ctx)
-    ["api", "debug", "radarr-raw"] -> handle_radarr_raw(req, ctx)
-    ["api", "debug", "qbit-raw"] -> handle_qbit_raw(req, ctx)
 
     // Static files
     ["static", ..rest] -> serve_static(rest, ctx.static_dir)
 
-    // Serve index.html for SPA routes
-    [] -> serve_index(ctx.static_dir)
+    // Serve index.html for SPA routes (catch-all for SPA routing)
     _ -> serve_index(ctx.static_dir)
   }
 }
@@ -67,7 +67,6 @@ fn handle_health(_req: Request) -> Response {
 }
 
 fn handle_debug(_req: Request, ctx: Context) -> Response {
-  // Fetch raw data from each service
   let jellyseerr_result = jellyseerr.get_requests(ctx.config.jellyseerr_url, ctx.config.jellyseerr_api_key)
   let sonarr_result = arr.get_sonarr_queue(ctx.config.sonarr_url, ctx.config.sonarr_api_key)
   let radarr_result = arr.get_radarr_queue(ctx.config.radarr_url, ctx.config.radarr_api_key)
@@ -81,6 +80,13 @@ fn handle_debug(_req: Request, ctx: Context) -> Response {
     Ok(reqs) -> json.object([
       #("status", json.string("ok")),
       #("count", json.int(list.length(reqs))),
+      #("requests", json.array(reqs, fn(r: request.JellyseerrRequest) {
+        json.object([
+          #("id", json.int(r.id)),
+          #("status", json.int(r.status)),
+          #("type", json.string(r.media_type)),
+        ])
+      })),
     ])
     Error(e) -> json.object([
       #("status", json.string("error")),
@@ -92,7 +98,6 @@ fn handle_debug(_req: Request, ctx: Context) -> Response {
     Ok(items) -> json.object([
       #("status", json.string("ok")),
       #("count", json.int(list.length(items))),
-      #("items", json.array(items, debug_arr_item)),
     ])
     Error(e) -> json.object([
       #("status", json.string("error")),
@@ -104,7 +109,6 @@ fn handle_debug(_req: Request, ctx: Context) -> Response {
     Ok(items) -> json.object([
       #("status", json.string("ok")),
       #("count", json.int(list.length(items))),
-      #("items", json.array(items, debug_arr_item)),
     ])
     Error(e) -> json.object([
       #("status", json.string("error")),
@@ -116,7 +120,14 @@ fn handle_debug(_req: Request, ctx: Context) -> Response {
     Ok(torrents) -> json.object([
       #("status", json.string("ok")),
       #("count", json.int(list.length(torrents))),
-      #("torrents", json.array(torrents, debug_torrent)),
+      #("torrents", json.array(torrents, fn(t: request.TorrentInfo) {
+        json.object([
+          #("name", json.string(t.name)),
+          #("hash", json.string(t.hash)),
+          #("progress", json.float(t.progress)),
+          #("state", json.string(t.state)),
+        ])
+      })),
     ])
     Error(e) -> json.object([
       #("status", json.string("error")),
@@ -137,47 +148,6 @@ fn handle_debug(_req: Request, ctx: Context) -> Response {
   wisp.json_response(body, 200)
 }
 
-fn handle_radarr_raw(_req: Request, ctx: Context) -> Response {
-  let url = ctx.config.radarr_url <> "/api/v3/queue?pageSize=10&includeMovie=true"
-  let headers = [#("X-Api-Key", ctx.config.radarr_api_key), #("Accept", "application/json")]
-
-  let body = case http_client.get(url, headers) {
-    Ok(raw) -> raw
-    Error(e) -> "Error: " <> http_client.error_message(e)
-  }
-
-  wisp.response(200)
-  |> wisp.set_header("Content-Type", "application/json")
-  |> wisp.set_body(wisp.Text(body))
-}
-
-fn handle_qbit_raw(_req: Request, ctx: Context) -> Response {
-  // First authenticate
-  let auth_url = ctx.config.qbittorrent_url <> "/api/v2/auth/login"
-  let auth_body = "username=" <> ctx.config.qbittorrent_username <> "&password=" <> ctx.config.qbittorrent_password
-  let auth_headers = [#("Content-Type", "application/x-www-form-urlencoded")]
-
-  let body = case http_client.post_with_cookie(auth_url, auth_body, auth_headers) {
-    Ok(auth_resp) -> {
-      case auth_resp.cookie {
-        option.Some(cookie) -> {
-          let url = ctx.config.qbittorrent_url <> "/api/v2/torrents/info"
-          case http_client.get_with_cookie(url, [], cookie) {
-            Ok(raw) -> raw
-            Error(e) -> "Error fetching torrents: " <> http_client.error_message(e)
-          }
-        }
-        option.None -> "Error: No session cookie returned"
-      }
-    }
-    Error(e) -> "Error authenticating: " <> http_client.error_message(e)
-  }
-
-  wisp.response(200)
-  |> wisp.set_header("Content-Type", "application/json")
-  |> wisp.set_body(wisp.Text(body))
-}
-
 fn debug_jellyseerr_error(e: jellyseerr.JellyseerrError) -> String {
   case e {
     jellyseerr.HttpError(_) -> "HTTP error"
@@ -192,8 +162,6 @@ fn debug_arr_error(e: arr.ArrError) -> String {
   }
 }
 
-import api/http_client
-
 fn debug_qbit_error(e: qbittorrent.QBitError) -> String {
   case e {
     qbittorrent.HttpError(http_err) -> "HTTP error: " <> http_client.error_message(http_err)
@@ -202,39 +170,8 @@ fn debug_qbit_error(e: qbittorrent.QBitError) -> String {
   }
 }
 
-fn debug_arr_item(item: request.ArrQueueItem) -> json.Json {
-  json.object([
-    #("id", json.int(item.id)),
-    #("title", json.string(item.title)),
-    #("status", json.string(item.status)),
-    #("tmdb_id", option_json(item.tmdb_id, json.int)),
-    #("tvdb_id", option_json(item.tvdb_id, json.int)),
-    #("download_id", option_json(item.download_id, json.string)),
-  ])
-}
-
-fn debug_torrent(t: request.TorrentInfo) -> json.Json {
-  json.object([
-    #("hash", json.string(t.hash)),
-    #("name", json.string(t.name)),
-    #("progress", json.float(t.progress)),
-    #("dlspeed", json.int(t.dlspeed)),
-    #("eta", json.int(t.eta)),
-    #("state", json.string(t.state)),
-  ])
-}
-
-import gleam/option
-
-fn option_json(opt: option.Option(a), encoder: fn(a) -> json.Json) -> json.Json {
-  case opt {
-    option.Some(v) -> encoder(v)
-    option.None -> json.null()
-  }
-}
-
 fn serve_static(path_segments: List(String), static_dir: String) -> Response {
-  let path = static_dir <> "/" <> string_join(path_segments, "/")
+  let path = static_dir <> "/" <> string.join(path_segments, "/")
 
   case simplifile.read(path) {
     Ok(content) -> {
@@ -273,13 +210,6 @@ fn guess_content_type(path: String) -> String {
     "ico" -> "image/x-icon"
     _ -> "application/octet-stream"
   }
-}
-
-import gleam/string
-import gleam/list
-
-fn string_join(parts: List(String), sep: String) -> String {
-  string.join(parts, sep)
 }
 
 fn get_extension(path: String) -> String {

@@ -45,10 +45,10 @@ fn get_queue(
 
 fn parse_queue_response(
   body: String,
-  is_sonarr: Bool,
+  _is_sonarr: Bool,
 ) -> Result(List(ArrQueueItem), ArrError) {
   let decoder = {
-    use records <- decode.field("records", decode.list(queue_item_decoder(is_sonarr)))
+    use records <- decode.field("records", decode.list(queue_item_decoder()))
     decode.success(records)
   }
 
@@ -58,7 +58,7 @@ fn parse_queue_response(
   }
 }
 
-fn queue_item_decoder(_is_sonarr: Bool) -> decode.Decoder(ArrQueueItem) {
+fn queue_item_decoder() -> decode.Decoder(ArrQueueItem) {
   use id <- decode.field("id", decode.int)
   use title <- decode.field("title", decode.string)
   use status <- decode.field("status", decode.string)

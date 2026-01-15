@@ -117,7 +117,7 @@ pub fn media_request_to_json(request: MediaRequest) -> Json {
     #("requestStatus", request_status_to_json(request.request_status)),
     #("requestedBy", option_to_json(request.requested_by, json.string)),
     #("requestedAt", option_to_json(request.requested_at, json.string)),
-    #("downloadStatus", option_to_json_with(request.download_status, download_status_to_json)),
+    #("downloadStatus", option_to_json(request.download_status, download_status_to_json)),
     #("downloadProgress", option_to_json(request.download_progress, json.float)),
     #("downloadSpeed", option_to_json(request.download_speed, json.int)),
     #("etaSeconds", option_to_json(request.eta_seconds, json.int)),
@@ -166,21 +166,23 @@ fn option_to_json(opt: Option(a), encoder: fn(a) -> Json) -> Json {
   }
 }
 
-fn option_to_json_with(opt: Option(a), encoder: fn(a) -> Json) -> Json {
-  case opt {
-    option.Some(value) -> encoder(value)
-    option.None -> json.null()
-  }
-}
-
 // Conversion helpers
 
 pub fn jellyseerr_status_to_request_status(status: Int) -> RequestStatus {
+  // Jellyseerr MediaRequest status codes:
+  // 1 = Pending (awaiting approval)
+  // 2 = Approved (approved, being processed)
+  // 3 = Declined
+  // Media status codes (sometimes returned):
+  // 3 = Processing
+  // 4 = Partially Available
+  // 5 = Available
   case status {
     1 -> Pending
     2 -> Approved
-    3 -> Available
-    4 -> Processing
+    3 -> Processing
+    4 -> Available
+    5 -> Available
     _ -> Unknown
   }
 }

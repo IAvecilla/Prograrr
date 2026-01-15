@@ -24,10 +24,10 @@ COPY static/ /app/static/
 
 # Set environment defaults
 ENV PORT=3000
-ENV JELLYSEERR_URL=http://jellyseerr:5055
-ENV SONARR_URL=http://gluetun:8989
-ENV RADARR_URL=http://gluetun:7878
-ENV QBITTORRENT_URL=http://gluetun:8080
+ENV JELLYSEERR_URL=http://localhost:5055
+ENV SONARR_URL=http://localhost:8989
+ENV RADARR_URL=http://localhost:7878
+ENV QBITTORRENT_URL=http://localhost:8080
 
 EXPOSE 3000
 

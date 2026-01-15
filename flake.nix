@@ -1,5 +1,5 @@
 {
-  description = "Media Request Tracker - Gleam + Lustre application";
+  description = "Prograrr - Download progress tracker for your *arr stack";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -22,8 +22,17 @@
           ];
 
           shellHook = ''
-            echo "Gleam dev environment ready!"
-            echo "Gleam version: $(gleam --version)"
+            echo "📊 Prograrr dev environment ready!"
+            echo ""
+            echo "Gleam $(gleam --version)"
+            echo "Erlang/OTP $(erl -eval 'io:format("~s", [erlang:system_info(otp_release)]), halt().' -noshell)"
+            echo ""
+            echo "Commands:"
+            echo "  gleam build    - Compile the project"
+            echo "  gleam run      - Run the server"
+            echo "  gleam test     - Run tests"
+            echo ""
+            echo "Required env vars: JELLYSEERR_API_KEY, SONARR_API_KEY, RADARR_API_KEY"
           '';
         };
       });

@@ -78,14 +78,6 @@ pub fn post_with_cookie(url: String, body: String, headers: List(#(String, Strin
   }
 }
 
-/// Make an HTTP POST request (simple version)
-pub fn post(url: String, body: String, headers: List(#(String, String))) -> Result(String, HttpError) {
-  case post_with_cookie(url, body, headers) {
-    Ok(resp) -> Ok(resp.body)
-    Error(e) -> Error(e)
-  }
-}
-
 fn add_headers(req: request.Request(String), headers: List(#(String, String))) -> request.Request(String) {
   list.fold(headers, req, fn(r, header) {
     request.set_header(r, header.0, header.1)

@@ -1,5 +1,6 @@
 import api/http_client
 import gleam/dynamic/decode
+import gleam/int
 import gleam/json
 import gleam/option.{None, Some}
 import models/request.{type TorrentInfo, TorrentInfo}
@@ -8,17 +9,6 @@ pub type QBitError {
   HttpError(http_client.HttpError)
   ParseError(String)
   AuthError(String)
-}
-
-/// Fetch all torrents from qBittorrent (no auth)
-pub fn get_torrents(base_url: String) -> Result(List(TorrentInfo), QBitError) {
-  let url = base_url <> "/api/v2/torrents/info"
-  let headers = [#("Accept", "application/json")]
-
-  case http_client.get(url, headers) {
-    Ok(body) -> parse_torrents_response(body)
-    Error(err) -> Error(HttpError(err))
-  }
 }
 
 /// Get torrents with authentication (handles session cookie)
@@ -85,8 +75,6 @@ fn torrent_decoder() -> decode.Decoder(TorrentInfo) {
     state: state,
   ))
 }
-
-import gleam/int
 
 /// Decode a number (int or float) as a float
 fn number_as_float() -> decode.Decoder(Float) {

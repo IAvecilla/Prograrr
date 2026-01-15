@@ -12,13 +12,6 @@ import models/request.{
   MediaRequest, Movie, TvShow,
 }
 
-pub type AggregatorError {
-  JellyseerrError(jellyseerr.JellyseerrError)
-  SonarrError(arr.ArrError)
-  RadarrError(arr.ArrError)
-  QBitError(qbittorrent.QBitError)
-}
-
 /// Fetch and aggregate all data from configured services
 pub fn get_all_requests(config: Config) -> List(MediaRequest) {
   // Fetch from all sources, using empty lists on error
@@ -152,12 +145,32 @@ fn find_torrent_by_name(
   torrents: List(TorrentInfo),
   title: String,
 ) -> Option(TorrentInfo) {
-  let lower_title = string.lowercase(title)
+  let title_words = extract_words(title)
   torrents
   |> list.find(fn(t) {
-    string.lowercase(t.name) |> string.contains(lower_title)
+    let torrent_words = extract_words(t.name)
+    // Check if all title words are present in torrent name
+    list.all(title_words, fn(word) {
+      list.contains(torrent_words, word)
+    })
   })
   |> option.from_result
+}
+
+/// Extract words from a string for matching:
+/// - Convert to lowercase
+/// - Replace dots, underscores, hyphens with spaces
+/// - Split into words and filter out empty/short ones
+fn extract_words(s: String) -> List(String) {
+  s
+  |> string.lowercase
+  |> string.replace(".", " ")
+  |> string.replace("_", " ")
+  |> string.replace("-", " ")
+  |> string.replace("'", "")
+  |> string.replace(":", "")
+  |> string.split(" ")
+  |> list.filter(fn(word) { string.length(word) > 1 })
 }
 
 fn extract_year(date: Option(String)) -> Option(Int) {
