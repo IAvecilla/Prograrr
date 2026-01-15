@@ -1,0 +1,19 @@
+services:
+  request-tracker:
+    build: .
+    container_name: request-tracker
+    environment:
+      - TZ=${TIMEZONE}
+      - PORT=3000
+      - JELLYSEERR_URL=http://jellyseerr:5055
+      - JELLYSEERR_API_KEY=${JELLYSEERR_API_KEY}
+      - SONARR_URL=http://gluetun:8989
+      - SONARR_API_KEY=${SONARR_API_KEY}
+      - RADARR_URL=http://gluetun:7878
+      - RADARR_API_KEY=${RADARR_API_KEY}
+      - QBITTORRENT_URL=http://gluetun:8701
+      - QBITTORRENT_USERNAME=nacho
+      - QBITTORRENT_PASSWORD=nachito123
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
