@@ -29,23 +29,38 @@ Optional (with defaults):
 
 ## Architecture Overview
 
-Pulsearr is a Gleam web service that aggregates media request data from multiple sources into a unified API. It runs on the Erlang/OTP runtime using Wisp (web framework) and Mist (HTTP server).
+Prograrr is a Gleam web service that aggregates media request data from multiple sources into a unified API. It runs on the Erlang/OTP runtime using Wisp (web framework) and Mist (HTTP server).
 
 ### Data Flow
 
-1. **Jellyseerr** → Source of truth for media requests (movies/TV shows)
-2. **Sonarr/Radarr** → Download queue status, provides TMDB/TVDB IDs for matching
-3. **qBittorrent** → Real-time torrent progress (requires session cookie auth)
+Each service provides specific data:
 
-The aggregator (`src/api/aggregator.gleam`) combines data from all sources by:
-- Fetching requests from Jellyseerr
-- Matching to Sonarr queue items by TVDB ID (TV shows)
-- Matching to Radarr queue items by TMDB ID (movies)
-- Matching torrents by download hash or fuzzy name search
+| Service | Data Provided |
+|---------|---------------|
+| **Jellyseerr** | Requests list, requester, request status, media metadata (title, poster, TMDB/TVDB IDs) |
+| **Sonarr** | TV show download queue, TVDB ID, download hash |
+| **Radarr** | Movie download queue, TMDB ID, download hash |
+| **qBittorrent** | Download progress %, speed, ETA, torrent state |
+
+The aggregator (`src/api/aggregator.gleam`) combines data from all sources:
+
+```
+Jellyseerr (request info: title, poster, who requested)
+    ↓ matched by TMDB/TVDB ID
+Sonarr/Radarr (queue item with download hash)
+    ↓ matched by hash
+qBittorrent (real-time progress, speed, ETA)
+```
+
+Matching logic:
+- Fetches requests from Jellyseerr
+- Matches to Sonarr queue items by TVDB ID (TV shows)
+- Matches to Radarr queue items by TMDB ID (movies)
+- Matches torrents by download hash or fuzzy name search
 
 ### Module Structure
 
-- `src/pulsearr.gleam` - Entry point, server setup
+- `src/prograrr.gleam` - Entry point, server setup
 - `src/router.gleam` - HTTP routing, serves API and static files
 - `src/config.gleam` - Environment variable loading
 - `src/api/aggregator.gleam` - Core business logic, combines all data sources
