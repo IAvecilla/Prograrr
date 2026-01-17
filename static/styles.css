@@ -117,6 +117,60 @@ body {
   color: var(--text-secondary);
 }
 
+/* Tabs */
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 1rem;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
+.tab-active {
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: white;
+}
+
+.tab-active:hover {
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: white;
+}
+
+.tab-count {
+  background: rgba(255, 255, 255, 0.2);
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+}
+
+.tab:not(.tab-active) .tab-count {
+  background: var(--bg-secondary);
+}
+
 /* Requests Grid */
 .requests-grid {
   display: grid;
@@ -217,26 +271,6 @@ body {
   text-transform: capitalize;
 }
 
-.badge-pending {
-  background: rgba(234, 179, 8, 0.15);
-  color: var(--accent-yellow);
-}
-
-.badge-approved {
-  background: rgba(59, 130, 246, 0.15);
-  color: var(--accent-blue);
-}
-
-.badge-available {
-  background: rgba(34, 197, 94, 0.15);
-  color: var(--accent-green);
-}
-
-.badge-processing {
-  background: rgba(168, 85, 247, 0.15);
-  color: var(--accent-purple);
-}
-
 .badge-downloading {
   background: rgba(59, 130, 246, 0.15);
   color: var(--accent-blue);
@@ -301,7 +335,7 @@ body {
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--accent-blue) 0%, var(--accent-purple) 100%);
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.6) 0%, rgba(255, 255, 255, 0.9) 100%);
   border-radius: 9999px;
   transition: width 0.3s ease;
 }
@@ -340,6 +374,17 @@ body {
 
   .main {
     padding: 1rem;
+  }
+
+  .tabs {
+    flex-wrap: wrap;
+  }
+
+  .tab {
+    flex: 1;
+    justify-content: center;
+    padding: 0.625rem 0.75rem;
+    font-size: 0.8rem;
   }
 
   .requests-grid {

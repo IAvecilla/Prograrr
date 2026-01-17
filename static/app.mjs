@@ -4,7 +4,8 @@
 let state = {
   requests: [],
   loading: true,
-  error: null
+  error: null,
+  activeTab: 'downloading'
 };
 
 // API
@@ -26,10 +27,6 @@ async function fetchRequests() {
 // Helpers
 function formatStatus(status) {
   const statusMap = {
-    pending: 'Pending',
-    approved: 'Approved',
-    available: 'Available',
-    processing: 'Processing',
     downloading: 'Downloading',
     seeding: 'Seeding',
     paused: 'Paused',
@@ -58,20 +55,69 @@ function mediaTypeIcon(type) {
   return type === 'movie' ? '🎬' : '📺';
 }
 
+// Tab filtering
+function isActivelyDownloading(r) {
+  return r.downloadStatus === 'downloading' ||
+         r.downloadStatus === 'queued' ||
+         r.downloadStatus === 'paused' ||
+         r.downloadStatus === 'stalled';
+}
+
+function filterRequests(requests, tab) {
+  switch (tab) {
+    case 'downloading':
+      return requests.filter(isActivelyDownloading);
+    case 'missing':
+      // Only show as missing if NOT actively downloading
+      return requests.filter(r =>
+        (r.isMissing || r.isNotAvailable) && !isActivelyDownloading(r)
+      );
+    case 'completed':
+      // Only show as completed if NOT missing and NOT downloading
+      return requests.filter(r =>
+        !r.isMissing &&
+        !r.isNotAvailable &&
+        !isActivelyDownloading(r) &&
+        (r.requestStatus === 'available' ||
+         r.downloadStatus === 'seeding' ||
+         r.downloadStatus === 'completed')
+      );
+    default:
+      return requests;
+  }
+}
+
+function getTabCount(requests, tab) {
+  return filterRequests(requests, tab).length;
+}
+
+function setActiveTab(tab) {
+  state.activeTab = tab;
+  render();
+}
+
 // Render
 function render() {
   const app = document.getElementById('app');
+  const filteredRequests = filterRequests(state.requests, state.activeTab);
+
   app.innerHTML = `
     <div class="app">
       ${renderHeader()}
       <main class="main">
         ${state.error ? renderError() : ''}
         ${state.loading && state.requests.length === 0 ? renderLoading() : ''}
-        ${!state.loading && state.requests.length === 0 && !state.error ? renderEmpty() : ''}
-        ${state.requests.length > 0 ? renderRequests() : ''}
+        ${!state.loading ? renderTabs() : ''}
+        ${!state.loading && filteredRequests.length === 0 && !state.error ? renderEmpty() : ''}
+        ${filteredRequests.length > 0 ? renderRequestsGrid(filteredRequests) : ''}
       </main>
     </div>
   `;
+
+  // Attach tab click handlers
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => setActiveTab(tab.dataset.tab));
+  });
 }
 
 function renderHeader() {
@@ -105,15 +151,37 @@ function renderError() {
 function renderEmpty() {
   return `
     <div class="empty">
-      <p>No requests found</p>
+      <p>No requests in this category</p>
     </div>
   `;
 }
 
-function renderRequests() {
+function renderTabs() {
+  const tabs = [
+    { id: 'downloading', label: 'Downloading' },
+    { id: 'missing', label: 'Missing' },
+    { id: 'completed', label: 'Completed' }
+  ];
+
+  return `
+    <div class="tabs">
+      ${tabs.map(tab => `
+        <button
+          class="tab ${state.activeTab === tab.id ? 'tab-active' : ''}"
+          data-tab="${tab.id}"
+        >
+          ${tab.label}
+          <span class="tab-count">${getTabCount(state.requests, tab.id)}</span>
+        </button>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderRequestsGrid(requests) {
   return `
     <div class="requests-grid">
-      ${state.requests.map(renderRequestCard).join('')}
+      ${requests.map(renderRequestCard).join('')}
     </div>
   `;
 }
@@ -150,15 +218,19 @@ function renderTitle(request) {
 }
 
 function renderBadges(request) {
-  const badges = [
-    `<span class="badge badge-${request.requestStatus}">${formatStatus(request.requestStatus)}</span>`
-  ];
+  const badges = [];
 
-  if (request.isNotAvailable) {
-    badges.push(`<span class="badge badge-not-available">Not Available</span>`);
+  // Actively downloading takes priority
+  if (isActivelyDownloading(request)) {
+    badges.push(`<span class="badge badge-download badge-${request.downloadStatus}">${formatStatus(request.downloadStatus)}</span>`);
   } else if (request.isMissing) {
+    // Missing (file was deleted)
     badges.push(`<span class="badge badge-missing">Missing</span>`);
+  } else if (request.isNotAvailable) {
+    // Not released yet
+    badges.push(`<span class="badge badge-not-available">Not Available</span>`);
   } else if (request.downloadStatus) {
+    // Completed/seeding
     badges.push(`<span class="badge badge-download badge-${request.downloadStatus}">${formatStatus(request.downloadStatus)}</span>`);
   }
 
@@ -170,11 +242,16 @@ function renderBadges(request) {
 }
 
 function renderProgress(request) {
+  // Don't show progress bar if no progress, completed, or at 100%
   if (request.downloadProgress == null) return '';
+  if (request.downloadProgress >= 100) return '';
+  if (request.downloadStatus === 'seeding' || request.downloadStatus === 'completed') return '';
 
   const progress = request.downloadProgress.toFixed(1);
   const speed = request.downloadSpeed ? `<span class="download-speed">${formatSpeed(request.downloadSpeed)}</span>` : '';
-  const eta = request.etaSeconds ? `<span class="eta">${formatEta(request.etaSeconds)}</span>` : '';
+  const eta = request.etaSeconds && request.etaSeconds > 0 && request.etaSeconds < 8640000
+    ? `<span class="eta">${formatEta(request.etaSeconds)}</span>`
+    : '';
 
   return `
     <div class="progress-section">
