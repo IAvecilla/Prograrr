@@ -169,13 +169,23 @@ fn debug_qbit_error(e: qbittorrent.QBitError) -> String {
 }
 
 fn serve_static(path_segments: List(String), static_dir: String) -> Response {
-  let path = static_dir <> "/" <> string.join(path_segments, "/")
+  // Strip query params from path (e.g., styles.css?v=2 -> styles.css)
+  let clean_segments =
+    path_segments
+    |> list.map(fn(s) {
+      case string.split(s, "?") {
+        [name, ..] -> name
+        _ -> s
+      }
+    })
+  let path = static_dir <> "/" <> string.join(clean_segments, "/")
 
   case simplifile.read(path) {
     Ok(content) -> {
       let content_type = guess_content_type(path)
       wisp.response(200)
       |> wisp.set_header("Content-Type", content_type)
+      |> wisp.set_header("Cache-Control", "public, max-age=3600")
       |> wisp.set_body(wisp.Text(content))
     }
     Error(_) -> wisp.not_found()
