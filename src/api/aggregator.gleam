@@ -8,8 +8,8 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import models/request.{
-  type ArrQueueItem, type JellyseerrRequest, type MediaRequest, type TorrentInfo,
-  MediaRequest, Movie, TvShow,
+  type ArrQueueItem, type JellyseerrRequest, type MediaRequest, type RadarrMovie,
+  type SonarrSeries, type TorrentInfo, MediaRequest, Movie, TvShow,
 }
 
 /// Fetch and aggregate all data from configured services
@@ -27,6 +27,15 @@ pub fn get_all_requests(config: Config) -> List(MediaRequest) {
     arr.get_radarr_queue(config.radarr_url, config.radarr_api_key)
     |> result.unwrap([])
 
+  // Fetch movie/series lists to check missing status
+  let radarr_movies =
+    arr.get_radarr_movies(config.radarr_url, config.radarr_api_key)
+    |> result.unwrap([])
+
+  let sonarr_series =
+    arr.get_sonarr_series(config.sonarr_url, config.sonarr_api_key)
+    |> result.unwrap([])
+
   let torrents =
     qbittorrent.get_torrents_with_auth(
       config.qbittorrent_url,
@@ -38,7 +47,14 @@ pub fn get_all_requests(config: Config) -> List(MediaRequest) {
   // Combine all data
   jellyseerr_requests
   |> list.map(fn(req) {
-    combine_request(req, sonarr_queue, radarr_queue, torrents)
+    combine_request(
+      req,
+      sonarr_queue,
+      radarr_queue,
+      radarr_movies,
+      sonarr_series,
+      torrents,
+    )
   })
 }
 
@@ -46,6 +62,8 @@ fn combine_request(
   js_req: JellyseerrRequest,
   sonarr_queue: List(ArrQueueItem),
   radarr_queue: List(ArrQueueItem),
+  radarr_movies: List(RadarrMovie),
+  sonarr_series: List(SonarrSeries),
   torrents: List(TorrentInfo),
 ) -> MediaRequest {
   let media_type = case js_req.media_type {
@@ -67,10 +85,10 @@ fn combine_request(
     None -> #("Unknown", None, None, None, None)
   }
 
-  // Find matching queue item from Sonarr/Radarr
+  // Find matching queue item from Sonarr/Radarr by external ID
   let queue_item = case media_type {
-    Movie -> find_radarr_queue_item(radarr_queue, tmdb_id)
-    TvShow -> find_sonarr_queue_item(sonarr_queue, tvdb_id)
+    Movie -> find_queue_item(radarr_queue, tmdb_id, fn(i) { i.tmdb_id })
+    TvShow -> find_queue_item(sonarr_queue, tvdb_id, fn(i) { i.tvdb_id })
   }
 
   // Find matching torrent from qBittorrent
@@ -83,6 +101,16 @@ fn combine_request(
     None -> find_torrent_by_name(torrents, title)
   }
 
+  let request_status = request.jellyseerr_status_to_request_status(js_req.status)
+
+  // Determine if request is missing based on Radarr/Sonarr status
+  // Missing: monitored, no file, IS available (released) - should be downloadable
+  // Not available: monitored, no file, NOT available (not released yet)
+  let #(is_missing, is_not_available) = case media_type {
+    Movie -> get_movie_status(radarr_movies, tmdb_id)
+    TvShow -> #(is_series_missing(sonarr_series, tvdb_id), False)
+  }
+
   // Build the combined request
   MediaRequest(
     id: js_req.id,
@@ -90,7 +118,7 @@ fn combine_request(
     title: title,
     poster_url: poster_url,
     year: year,
-    request_status: request.jellyseerr_status_to_request_status(js_req.status),
+    request_status: request_status,
     requested_by: js_req.requested_by,
     requested_at: js_req.created_at,
     download_status: torrent
@@ -102,30 +130,60 @@ fn combine_request(
     queue_status: queue_item |> option.map(fn(qi) { qi.status }),
     tmdb_id: tmdb_id,
     tvdb_id: tvdb_id,
+    is_missing: is_missing,
+    is_not_available: is_not_available,
   )
 }
 
-fn find_radarr_queue_item(
-  queue: List(ArrQueueItem),
+/// Get movie status: (is_missing, is_not_available)
+/// Missing: monitored, no file, IS available (released)
+/// Not available: monitored, no file, NOT available (not released yet)
+fn get_movie_status(
+  movies: List(RadarrMovie),
   tmdb_id: Option(Int),
-) -> Option(ArrQueueItem) {
+) -> #(Bool, Bool) {
   case tmdb_id {
-    Some(id) ->
-      queue
-      |> list.find(fn(item) { item.tmdb_id == Some(id) })
-      |> option.from_result
-    None -> None
+    Some(id) -> {
+      movies
+      |> list.find(fn(m) { m.tmdb_id == Some(id) })
+      |> result.map(fn(m) {
+        let monitored_and_no_file = m.monitored && !m.has_file
+        case monitored_and_no_file {
+          True -> #(m.is_available, !m.is_available)
+          False -> #(False, False)
+        }
+      })
+      |> result.unwrap(#(False, False))
+    }
+    None -> #(False, False)
   }
 }
 
-fn find_sonarr_queue_item(
-  queue: List(ArrQueueItem),
-  tvdb_id: Option(Int),
-) -> Option(ArrQueueItem) {
+/// Check if a series is missing episodes in Sonarr (monitored but missing episodes)
+fn is_series_missing(series: List(SonarrSeries), tvdb_id: Option(Int)) -> Bool {
   case tvdb_id {
+    Some(id) -> {
+      series
+      |> list.find(fn(s) { s.tvdb_id == Some(id) })
+      |> result.map(fn(s) {
+        s.monitored && s.episode_count > s.episode_file_count
+      })
+      |> result.unwrap(False)
+    }
+    None -> False
+  }
+}
+
+/// Find a queue item by matching an external ID using the provided getter
+fn find_queue_item(
+  queue: List(ArrQueueItem),
+  target_id: Option(Int),
+  get_id: fn(ArrQueueItem) -> Option(Int),
+) -> Option(ArrQueueItem) {
+  case target_id {
     Some(id) ->
       queue
-      |> list.find(fn(item) { item.tvdb_id == Some(id) })
+      |> list.find(fn(item) { get_id(item) == Some(id) })
       |> option.from_result
     None -> None
   }

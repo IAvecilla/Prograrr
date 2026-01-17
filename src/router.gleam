@@ -94,27 +94,8 @@ fn handle_debug(_req: Request, ctx: Context) -> Response {
     ])
   }
 
-  let sonarr_status = case sonarr_result {
-    Ok(items) -> json.object([
-      #("status", json.string("ok")),
-      #("count", json.int(list.length(items))),
-    ])
-    Error(e) -> json.object([
-      #("status", json.string("error")),
-      #("error", json.string(debug_arr_error(e))),
-    ])
-  }
-
-  let radarr_status = case radarr_result {
-    Ok(items) -> json.object([
-      #("status", json.string("ok")),
-      #("count", json.int(list.length(items))),
-    ])
-    Error(e) -> json.object([
-      #("status", json.string("error")),
-      #("error", json.string(debug_arr_error(e))),
-    ])
-  }
+  let sonarr_status = format_arr_status(sonarr_result)
+  let radarr_status = format_arr_status(radarr_result)
 
   let qbit_status = case qbit_result {
     Ok(torrents) -> json.object([
@@ -159,6 +140,23 @@ fn debug_arr_error(e: arr.ArrError) -> String {
   case e {
     arr.HttpError(http_err) -> "HTTP error: " <> http_client.error_message(http_err)
     arr.ParseError(msg) -> "Parse error: " <> msg
+  }
+}
+
+fn format_arr_status(
+  result: Result(List(request.ArrQueueItem), arr.ArrError),
+) -> json.Json {
+  case result {
+    Ok(items) ->
+      json.object([
+        #("status", json.string("ok")),
+        #("count", json.int(list.length(items))),
+      ])
+    Error(e) ->
+      json.object([
+        #("status", json.string("error")),
+        #("error", json.string(debug_arr_error(e))),
+      ])
   }
 }
 

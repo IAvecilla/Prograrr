@@ -154,7 +154,11 @@ function renderBadges(request) {
     `<span class="badge badge-${request.requestStatus}">${formatStatus(request.requestStatus)}</span>`
   ];
 
-  if (request.downloadStatus) {
+  if (request.isNotAvailable) {
+    badges.push(`<span class="badge badge-not-available">Not Available</span>`);
+  } else if (request.isMissing) {
+    badges.push(`<span class="badge badge-missing">Missing</span>`);
+  } else if (request.downloadStatus) {
     badges.push(`<span class="badge badge-download badge-${request.downloadStatus}">${formatStatus(request.downloadStatus)}</span>`);
   }
 

@@ -50,6 +50,10 @@ pub type MediaRequest {
     // External IDs for matching
     tmdb_id: Option(Int),
     tvdb_id: Option(Int),
+    // Missing: monitored, no file, but is available (released) - should be downloadable
+    is_missing: Bool,
+    // Not available: monitored, no file, not available yet (not released)
+    is_not_available: Bool,
   )
 }
 
@@ -93,6 +97,28 @@ pub type ArrQueueItem {
   )
 }
 
+/// Movie from Radarr with monitored/missing status
+pub type RadarrMovie {
+  RadarrMovie(
+    id: Int,
+    tmdb_id: Option(Int),
+    monitored: Bool,
+    has_file: Bool,
+    is_available: Bool,
+  )
+}
+
+/// Series from Sonarr with monitored/missing status
+pub type SonarrSeries {
+  SonarrSeries(
+    id: Int,
+    tvdb_id: Option(Int),
+    monitored: Bool,
+    episode_count: Int,
+    episode_file_count: Int,
+  )
+}
+
 /// Torrent info from qBittorrent
 pub type TorrentInfo {
   TorrentInfo(
@@ -123,6 +149,8 @@ pub fn media_request_to_json(request: MediaRequest) -> Json {
     #("etaSeconds", option_to_json(request.eta_seconds, json.int)),
     #("queuePosition", option_to_json(request.queue_position, json.int)),
     #("queueStatus", option_to_json(request.queue_status, json.string)),
+    #("isMissing", json.bool(request.is_missing)),
+    #("isNotAvailable", json.bool(request.is_not_available)),
   ])
 }
 
@@ -168,41 +196,33 @@ fn option_to_json(opt: Option(a), encoder: fn(a) -> Json) -> Json {
 
 // Conversion helpers
 
+/// Convert Jellyseerr status code to RequestStatus.
+/// Note: Jellyseerr uses different status codes for requests vs media:
+/// - Request status: 1=Pending, 2=Approved, 3=Declined
+/// - Media status: 3=Processing, 4=Partially Available, 5=Available
+/// We treat status 3 as Processing since declined requests are typically filtered out.
 pub fn jellyseerr_status_to_request_status(status: Int) -> RequestStatus {
-  // Jellyseerr MediaRequest status codes:
-  // 1 = Pending (awaiting approval)
-  // 2 = Approved (approved, being processed)
-  // 3 = Declined
-  // Media status codes (sometimes returned):
-  // 3 = Processing
-  // 4 = Partially Available
-  // 5 = Available
   case status {
     1 -> Pending
     2 -> Approved
     3 -> Processing
-    4 -> Available
-    5 -> Available
+    4 | 5 -> Available
     _ -> Unknown
   }
 }
 
+/// Convert qBittorrent torrent state to DownloadStatus.
+/// See: https://github.com/qbittorrent/qBittorrent/wiki/WebUI-API-(qBittorrent-4.1)#torrent-management
 pub fn torrent_state_to_download_status(state: String) -> DownloadStatus {
   case state {
-    "downloading" -> Downloading
+    // Downloading states
+    "downloading" | "forcedDL" -> Downloading
+    "metaDL" | "allocating" | "queuedDL" | "checkingDL" -> Queued
     "stalledDL" -> Stalled
     "pausedDL" -> Paused
-    "queuedDL" -> Queued
-    "uploading" -> Seeding
-    "stalledUP" -> Seeding
-    "pausedUP" -> Seeding
-    "queuedUP" -> Seeding
-    "checkingDL" -> Queued
+    // Seeding/completed states
+    "uploading" | "stalledUP" | "pausedUP" | "queuedUP" | "forcedUP" -> Seeding
     "checkingUP" -> Completed
-    "forcedDL" -> Downloading
-    "forcedUP" -> Seeding
-    "allocating" -> Queued
-    "metaDL" -> Queued
     _ -> NotFound
   }
 }

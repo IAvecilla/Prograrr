@@ -272,6 +272,16 @@ body {
   color: var(--accent-purple);
 }
 
+.badge-missing {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--accent-red);
+}
+
+.badge-not-available {
+  background: rgba(249, 115, 22, 0.15);
+  color: var(--accent-orange);
+}
+
 .badge-download {
   border: 1px solid currentColor;
 }
