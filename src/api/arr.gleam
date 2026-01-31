@@ -74,6 +74,10 @@ fn queue_item_decoder() -> decode.Decoder(ArrQueueItem) {
   use series <- decode.optional_field("series", None, decode.optional(series_decoder()))
   let tvdb_id = option.flatten(series)
 
+  // Try to extract quality name from nested quality.quality.name
+  use quality <- decode.optional_field("quality", None, decode.optional(quality_decoder()))
+  let quality_name = option.flatten(quality)
+
   decode.success(ArrQueueItem(
     id: id,
     title: title,
@@ -83,6 +87,7 @@ fn queue_item_decoder() -> decode.Decoder(ArrQueueItem) {
     tmdb_id: tmdb_id,
     tvdb_id: tvdb_id,
     download_id: download_id,
+    quality: quality_name,
   ))
 }
 
@@ -94,6 +99,17 @@ fn movie_decoder() -> decode.Decoder(Option(Int)) {
 fn series_decoder() -> decode.Decoder(Option(Int)) {
   use tvdb_id <- decode.optional_field("tvdbId", None, decode.optional(decode.int))
   decode.success(tvdb_id)
+}
+
+fn quality_decoder() -> decode.Decoder(Option(String)) {
+  // Quality is nested: quality.quality.name
+  use inner_quality <- decode.optional_field("quality", None, decode.optional(quality_name_decoder()))
+  decode.success(option.flatten(inner_quality))
+}
+
+fn quality_name_decoder() -> decode.Decoder(Option(String)) {
+  use name <- decode.optional_field("name", None, decode.optional(decode.string))
+  decode.success(name)
 }
 
 /// Fetch all movies from Radarr with their monitored/hasFile status

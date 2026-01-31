@@ -128,6 +128,7 @@ fn combine_request(
     eta_seconds: torrent |> option.map(fn(t) { t.eta }),
     queue_position: queue_item |> option.map(fn(qi) { qi.id }),
     queue_status: queue_item |> option.map(fn(qi) { qi.status }),
+    quality: queue_item |> option.then(fn(qi) { qi.quality }),
     tmdb_id: tmdb_id,
     tvdb_id: tvdb_id,
     is_missing: is_missing,

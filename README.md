@@ -4,6 +4,8 @@ A lightweight dashboard that aggregates and displays real-time download progress
 
 ![Prograrr Dashboard](https://img.shields.io/badge/docker-ignacioavecilla%2Fprograrr-blue)
 
+![Prograrr Screenshot](screenshot.png)
+
 ## Features
 
 - Unified view of all media requests from Jellyseerr
@@ -114,11 +116,11 @@ networks:
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `PORT` | No | `3000` | Port the web server listens on |
-| `JELLYSEERR_URL` | Yes | `http://localhost:5055` | Jellyseerr instance URL |
+| `JELLYSEERR_URL` | No | `http://localhost:5055` | Jellyseerr instance URL |
 | `JELLYSEERR_API_KEY` | Yes | - | Jellyseerr API key |
-| `SONARR_URL` | Yes | `http://localhost:8989` | Sonarr instance URL |
+| `SONARR_URL` | No | `http://localhost:8989` | Sonarr instance URL |
 | `SONARR_API_KEY` | Yes | - | Sonarr API key |
-| `RADARR_URL` | Yes | `http://localhost:7878` | Radarr instance URL |
+| `RADARR_URL` | No | `http://localhost:7878` | Radarr instance URL |
 | `RADARR_API_KEY` | Yes | - | Radarr API key |
 | `QBITTORRENT_URL` | No | `http://localhost:8080` | qBittorrent Web UI URL |
 | `QBITTORRENT_USERNAME` | No | `admin` | qBittorrent username |

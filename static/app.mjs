@@ -55,6 +55,12 @@ function mediaTypeIcon(type) {
   return type === 'movie' ? '🎬' : '📺';
 }
 
+function formatQuality(quality) {
+  // Extract just the resolution (e.g., "Bluray-1080p" -> "1080p")
+  const match = quality.match(/(\d{3,4}p)/i);
+  return match ? match[1] : quality;
+}
+
 // Tab filtering
 function isActivelyDownloading(r) {
   return r.downloadStatus === 'downloading' ||
@@ -232,6 +238,10 @@ function renderBadges(request) {
   } else if (request.downloadStatus) {
     // Completed/seeding
     badges.push(`<span class="badge badge-download badge-${request.downloadStatus}">${formatStatus(request.downloadStatus)}</span>`);
+  }
+
+  if (request.quality) {
+    badges.push(`<span class="badge badge-quality">${formatQuality(request.quality)}</span>`);
   }
 
   if (request.requestedBy) {

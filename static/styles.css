@@ -316,6 +316,11 @@ body {
   color: var(--accent-orange);
 }
 
+.badge-quality {
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+}
+
 .badge-download {
   border: 1px solid currentColor;
 }

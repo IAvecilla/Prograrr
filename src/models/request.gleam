@@ -47,6 +47,7 @@ pub type MediaRequest {
     // Queue info from Sonarr/Radarr
     queue_position: Option(Int),
     queue_status: Option(String),
+    quality: Option(String),
     // External IDs for matching
     tmdb_id: Option(Int),
     tvdb_id: Option(Int),
@@ -94,6 +95,7 @@ pub type ArrQueueItem {
     tmdb_id: Option(Int),
     tvdb_id: Option(Int),
     download_id: Option(String),
+    quality: Option(String),
   )
 }
 
@@ -149,6 +151,7 @@ pub fn media_request_to_json(request: MediaRequest) -> Json {
     #("etaSeconds", option_to_json(request.eta_seconds, json.int)),
     #("queuePosition", option_to_json(request.queue_position, json.int)),
     #("queueStatus", option_to_json(request.queue_status, json.string)),
+    #("quality", option_to_json(request.quality, json.string)),
     #("isMissing", json.bool(request.is_missing)),
     #("isNotAvailable", json.bool(request.is_not_available)),
   ])

@@ -12,8 +12,8 @@ services:
       - RADARR_URL=http://gluetun:7878
       - RADARR_API_KEY=${RADARR_API_KEY}
       - QBITTORRENT_URL=http://gluetun:8701
-      - QBITTORRENT_USERNAME=nacho
-      - QBITTORRENT_PASSWORD=nachito123
+      - QBITTORRENT_USERNAME=${QBITTORRENT_USERNAME}
+      - QBITTORRENT_PASSWORD=${QBITTORRENT_PASSWORD}
     ports:
       - "3000:3000"
     restart: unless-stopped
