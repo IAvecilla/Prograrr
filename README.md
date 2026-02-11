@@ -152,8 +152,89 @@ networks:
 | Endpoint | Description |
 |----------|-------------|
 | `GET /api/requests` | Returns aggregated media requests with download status |
+| `GET /api/overview` | Returns processed, ready-to-render data split into downloading and missing categories |
 | `GET /api/health` | Health check endpoint |
 | `GET /api/debug` | Debug info showing connection status to all services |
+
+### `GET /api/overview`
+
+A processed endpoint designed for client integrations (e.g. Jellyfin plugins). Returns two categories — **downloading** (active downloads) and **missing** (not found / not available) — with TV shows merged into single entries and episodes grouped by season.
+
+Key behaviors:
+- **Movies** have top-level `progress`/`speed`/`eta`/`quality` fields; `seasons` is `[]`
+- **TV shows** have per-season aggregates (avg progress, total speed, max ETA) with per-episode detail; top-level progress fields are `null`
+- Multiple Jellyseerr requests for different seasons of the same series are merged into one entry
+- Completed/seeding episodes are filtered out — only active downloads are shown
+- `effectiveStatus` reflects the best status across all episodes (`downloading` > `paused` > `queued` > `stalled`)
+
+Response shape:
+
+```json
+{
+  "downloading": [
+    {
+      "title": "The Simpsons",
+      "mediaType": "tv",
+      "posterUrl": "https://image.tmdb.org/t/p/w500/...",
+      "year": 1989,
+      "requestedBy": "nacho",
+      "effectiveStatus": "downloading",
+      "progress": null,
+      "speed": null,
+      "eta": null,
+      "quality": null,
+      "seasons": [
+        {
+          "seasonNumber": 4,
+          "episodeCount": 2,
+          "progress": 45.5,
+          "speed": 5242880,
+          "eta": 3600,
+          "episodes": [
+            {
+              "episodeNumber": 3,
+              "title": "Homer the Heretic",
+              "progress": 45.5,
+              "speed": 5242880,
+              "eta": 3600,
+              "status": "downloading",
+              "quality": "1080p"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Sinners",
+      "mediaType": "movie",
+      "posterUrl": "...",
+      "year": 2025,
+      "requestedBy": "nacho",
+      "effectiveStatus": "downloading",
+      "progress": 72.3,
+      "speed": 3145728,
+      "eta": 900,
+      "quality": "1080p",
+      "seasons": []
+    }
+  ],
+  "missing": [
+    {
+      "title": "Send Help",
+      "mediaType": "movie",
+      "posterUrl": "...",
+      "year": 2026,
+      "requestedBy": "nacho",
+      "effectiveStatus": null,
+      "progress": null,
+      "speed": null,
+      "eta": null,
+      "quality": null,
+      "seasons": []
+    }
+  ]
+}
+```
 
 ## Troubleshooting
 

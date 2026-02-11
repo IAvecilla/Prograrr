@@ -10,6 +10,7 @@ import gleam/json
 import gleam/list
 import gleam/string
 import gleam/string_tree
+import models/overview
 import models/request
 import simplifile
 import wisp.{type Request, type Response}
@@ -31,6 +32,7 @@ pub fn handle_request(req: Request, ctx: Context) -> Response {
   case wisp.path_segments(req) {
     // API routes
     ["api", "requests"] -> handle_requests(req, ctx)
+    ["api", "overview"] -> handle_overview(req, ctx)
     ["api", "health"] -> handle_health(req)
     ["api", "debug"] -> handle_debug(req, ctx)
 
@@ -48,6 +50,22 @@ fn handle_requests(req: Request, ctx: Context) -> Response {
       let requests = aggregator.get_all_requests(ctx.config)
       let body =
         request.media_requests_to_json(requests)
+        |> json.to_string_tree
+        |> string_tree.to_string
+
+      wisp.json_response(body, 200)
+    }
+    Options -> wisp.ok()
+    _ -> wisp.method_not_allowed([Get])
+  }
+}
+
+fn handle_overview(req: Request, ctx: Context) -> Response {
+  case req.method {
+    Get -> {
+      let resp = aggregator.get_overview(ctx.config)
+      let body =
+        overview.overview_response_to_json(resp)
         |> json.to_string_tree
         |> string_tree.to_string
 

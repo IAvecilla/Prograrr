@@ -55,7 +55,12 @@ fn enrich_request(req: JellyseerrRequest, base_url: String, api_key: String) -> 
             _ -> "movie"
           }
           case get_media_details(base_url, api_key, media_type, tmdb_id) {
-            Ok(details) -> JellyseerrRequest(..req, media: Some(details))
+            Ok(details) ->
+              // Preserve tvdb_id from original media since details endpoint doesn't include it
+              JellyseerrRequest(
+                ..req,
+                media: Some(JellyseerrMedia(..details, tvdb_id: media.tvdb_id)),
+              )
             Error(_) -> req
           }
         }
@@ -137,6 +142,11 @@ fn request_decoder() -> decode.Decoder(JellyseerrRequest) {
     decode.optional(decode.string),
   )
   use media <- decode.optional_field("media", None, decode.optional(basic_media_decoder()))
+  use seasons <- decode.optional_field(
+    "seasons",
+    [],
+    decode.list(season_number_decoder()),
+  )
 
   decode.success(JellyseerrRequest(
     id: id,
@@ -145,12 +155,18 @@ fn request_decoder() -> decode.Decoder(JellyseerrRequest) {
     requested_by: requested_by,
     created_at: created_at,
     media: media,
+    requested_seasons: seasons,
   ))
 }
 
 fn nested_display_name_decoder() -> decode.Decoder(String) {
   use display_name <- decode.field("displayName", decode.string)
   decode.success(display_name)
+}
+
+fn season_number_decoder() -> decode.Decoder(Int) {
+  use season_number <- decode.field("seasonNumber", decode.int)
+  decode.success(season_number)
 }
 
 fn basic_media_decoder() -> decode.Decoder(JellyseerrMedia) {

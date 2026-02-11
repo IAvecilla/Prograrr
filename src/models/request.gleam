@@ -83,6 +83,7 @@ pub type JellyseerrRequest {
     requested_by: Option(String),
     created_at: Option(String),
     media: Option(JellyseerrMedia),
+    requested_seasons: List(Int),
   )
 }
 

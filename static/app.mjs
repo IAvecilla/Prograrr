@@ -1,5 +1,8 @@
 // Prograrr - Frontend Application
 
+// Track which seasons are expanded (survives re-renders)
+const expandedSeasons = new Set();
+
 // State
 let state = {
   requests: [],
@@ -61,6 +64,31 @@ function formatQuality(quality) {
   return match ? match[1] : quality;
 }
 
+// Pick the most relevant active download status across all episode downloads,
+// falling back to the main request status. Prioritizes "downloading" over less
+// active statuses like "stalled" so the badge reflects the best current state.
+function bestDownloadStatus(request) {
+  const priority = { downloading: 4, paused: 3, queued: 2, stalled: 1 };
+  let best = null;
+  let bestPri = -1;
+
+  // Check episode downloads first
+  if (request.episodeDownloads) {
+    for (const ep of request.episodeDownloads) {
+      const p = priority[ep.downloadStatus] ?? 0;
+      if (p > bestPri) { best = ep.downloadStatus; bestPri = p; }
+    }
+  }
+
+  // Check main request status
+  if (request.downloadStatus && isActiveDownloadStatus(request.downloadStatus)) {
+    const p = priority[request.downloadStatus] ?? 0;
+    if (p > bestPri) { best = request.downloadStatus; }
+  }
+
+  return best || 'downloading';
+}
+
 // Tab filtering
 function isActiveDownloadStatus(status) {
   return status === 'downloading' ||
@@ -101,8 +129,59 @@ function filterRequests(requests, tab) {
   }
 }
 
+// Merge multiple requests for the same TV series into a single card.
+// Jellyseerr creates separate requests per season, but we want one card per show.
+function mergeSeriesRequests(requests) {
+  const groups = new Map();
+  const result = [];
+
+  for (const r of requests) {
+    if (r.mediaType !== 'tv') {
+      result.push(r);
+      continue;
+    }
+    const key = `${r.title}|${r.year || ''}`;
+    if (!groups.has(key)) {
+      groups.set(key, []);
+    }
+    groups.get(key).push(r);
+  }
+
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      result.push(group[0]);
+      continue;
+    }
+
+    // Merge: use first request as base, combine episode downloads
+    const base = group[0];
+    const episodeMap = new Map();
+    for (const r of group) {
+      for (const ep of (r.episodeDownloads || [])) {
+        const epKey = `${ep.seasonNumber}-${ep.episodeNumber}`;
+        if (!episodeMap.has(epKey)) {
+          episodeMap.set(epKey, ep);
+        }
+      }
+    }
+    const episodes = [...episodeMap.values()].sort((a, b) =>
+      a.seasonNumber !== b.seasonNumber
+        ? a.seasonNumber - b.seasonNumber
+        : a.episodeNumber - b.episodeNumber
+    );
+
+    result.push({
+      ...base,
+      id: group.map(r => r.id).join('-'),
+      episodeDownloads: episodes,
+    });
+  }
+
+  return result;
+}
+
 function getTabCount(requests, tab) {
-  return filterRequests(requests, tab).length;
+  return mergeSeriesRequests(filterRequests(requests, tab)).length;
 }
 
 function setActiveTab(tab) {
@@ -113,7 +192,7 @@ function setActiveTab(tab) {
 // Render
 function render() {
   const app = document.getElementById('app');
-  const filteredRequests = filterRequests(state.requests, state.activeTab);
+  const filteredRequests = mergeSeriesRequests(filterRequests(state.requests, state.activeTab));
 
   app.innerHTML = `
     <div class="app">
@@ -131,6 +210,19 @@ function render() {
   // Attach tab click handlers
   document.querySelectorAll('.tab').forEach(tab => {
     tab.addEventListener('click', () => setActiveTab(tab.dataset.tab));
+  });
+
+  // Attach season header click handlers
+  document.querySelectorAll('.season-header').forEach(header => {
+    header.addEventListener('click', () => {
+      const key = header.dataset.seasonKey;
+      if (expandedSeasons.has(key)) {
+        expandedSeasons.delete(key);
+      } else {
+        expandedSeasons.add(key);
+      }
+      render();
+    });
   });
 }
 
@@ -236,9 +328,7 @@ function renderBadges(request) {
 
   // Actively downloading takes priority
   if (isActivelyDownloading(request)) {
-    const status = request.downloadStatus && isActiveDownloadStatus(request.downloadStatus)
-      ? request.downloadStatus
-      : request.episodeDownloads?.find(ep => isActiveDownloadStatus(ep.downloadStatus))?.downloadStatus || 'downloading';
+    const status = bestDownloadStatus(request);
     badges.push(`<span class="badge badge-download badge-${status}">${formatStatus(status)}</span>`);
   } else if (request.isMissing) {
     // Missing (file was deleted)
@@ -265,7 +355,7 @@ function renderBadges(request) {
 function renderProgress(request) {
   // For TV shows with episode downloads, render per-episode progress
   if (request.mediaType === 'tv' && request.episodeDownloads && request.episodeDownloads.length > 0) {
-    return renderEpisodeDownloads(request.episodeDownloads);
+    return renderEpisodeDownloads(request.id, request.episodeDownloads);
   }
 
   // Don't show progress bar if no progress, completed, or at 100%
@@ -293,25 +383,58 @@ function renderProgress(request) {
   `;
 }
 
-function renderEpisodeDownloads(episodes) {
-  // Group episodes by season
+function renderEpisodeDownloads(requestId, episodes) {
+  // Group episodes by season, filtering out completed/seeding
   const seasons = {};
   for (const ep of episodes) {
+    if (ep.downloadStatus === 'seeding' || ep.downloadStatus === 'completed') continue;
+    if (ep.downloadProgress != null && ep.downloadProgress >= 100) continue;
     const s = ep.seasonNumber;
     if (!seasons[s]) seasons[s] = [];
     seasons[s].push(ep);
   }
 
   const seasonKeys = Object.keys(seasons).sort((a, b) => Number(a) - Number(b));
+  if (seasonKeys.length === 0) return '';
 
   return `
     <div class="episode-downloads">
-      ${seasonKeys.map(s => `
-        <div class="season-group">
-          <span class="season-label">Season ${s}</span>
-          ${seasons[s].map(renderEpisodeProgress).join('')}
-        </div>
-      `).join('')}
+      ${seasonKeys.map(s => {
+        const eps = seasons[s];
+        const key = `${requestId}-${s}`;
+        const isExpanded = expandedSeasons.has(key);
+        const avgProgress = eps.reduce((sum, ep) => sum + (ep.downloadProgress || 0), 0) / eps.length;
+        const totalSpeed = eps.reduce((sum, ep) => sum + (ep.downloadSpeed || 0), 0);
+        const maxEta = Math.max(...eps.map(ep => (ep.etaSeconds && ep.etaSeconds > 0 && ep.etaSeconds < 8640000) ? ep.etaSeconds : 0));
+
+        const speedHtml = totalSpeed ? `<span class="download-speed">${formatSpeed(totalSpeed)}</span>` : '';
+        const etaHtml = maxEta > 0 ? `<span class="eta">${formatEta(maxEta)}</span>` : '';
+
+        const chevronSvg = `<svg class="season-chevron ${isExpanded ? 'season-chevron-expanded' : ''}" width="12" height="12" viewBox="0 0 12 12"><path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+        return `
+          <div class="season-group">
+            <div class="season-header" data-season-key="${key}">
+              ${chevronSvg}
+              <span class="season-label">Season ${s}</span>
+              <span class="season-ep-count">${eps.length} ep${eps.length !== 1 ? 's' : ''}</span>
+              <div class="season-summary-bar">
+                <div class="progress-fill" style="width: ${avgProgress.toFixed(1)}%"></div>
+              </div>
+              <div class="episode-stats">
+                <span class="progress-percent">${avgProgress.toFixed(1)}%</span>
+                ${speedHtml}
+                ${etaHtml}
+              </div>
+            </div>
+            <div class="season-episodes ${isExpanded ? 'season-episodes-expanded' : ''}">
+              <div class="season-episodes-inner">
+                ${eps.map(renderEpisodeProgress).join('')}
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('')}
     </div>
   `;
 }
@@ -326,10 +449,6 @@ function renderEpisodeProgress(ep) {
   const eta = ep.etaSeconds && ep.etaSeconds > 0 && ep.etaSeconds < 8640000
     ? `<span class="eta">${formatEta(ep.etaSeconds)}</span>`
     : '';
-
-  // Don't show bar for completed/seeding episodes
-  if (ep.downloadStatus === 'seeding' || ep.downloadStatus === 'completed') return '';
-  if (ep.downloadProgress != null && ep.downloadProgress >= 100) return '';
 
   return `
     <div class="episode-row">

@@ -2,16 +2,23 @@ import api/arr
 import api/jellyseerr
 import api/qbittorrent
 import config.{type Config}
+import gleam/dict
+import gleam/float
 import gleam/int
 import gleam/list
 import gleam/order
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
+import models/overview.{
+  type OverviewResponse, type ProcessedRequest, type SeasonProgress,
+  EpisodeProgress, OverviewResponse, ProcessedRequest, SeasonProgress,
+}
 import models/request.{
-  type ArrQueueItem, type EpisodeDownload, type JellyseerrRequest,
-  type MediaRequest, type RadarrMovie, type SonarrSeries, type TorrentInfo,
-  EpisodeDownload, MediaRequest, Movie, TvShow,
+  type ArrQueueItem, type DownloadStatus, type EpisodeDownload,
+  type JellyseerrRequest, type MediaRequest, type RadarrMovie,
+  type SonarrSeries, type TorrentInfo, Completed, Downloading, EpisodeDownload,
+  MediaRequest, Movie, Paused, Queued, Seeding, Stalled, TvShow,
 }
 
 /// Fetch and aggregate all data from configured services
@@ -94,11 +101,23 @@ fn combine_request(
   }
 
   // For TV shows, find ALL matching queue items for per-episode tracking
+  let requested_seasons = js_req.requested_seasons
   let episode_downloads = case media_type {
     TvShow -> {
       let all_items =
         find_all_queue_items(sonarr_queue, tvdb_id, fn(i) { i.tvdb_id })
       all_items
+      // Filter to only episodes from requested seasons (if seasons specified)
+      |> list.filter(fn(qi) {
+        case requested_seasons {
+          [] -> True
+          seasons ->
+            case qi.season_number {
+              Some(sn) -> list.contains(seasons, sn)
+              None -> True
+            }
+        }
+      })
       |> list.map(fn(qi) { build_episode_download(qi, torrents) })
       |> list.sort(fn(a, b) {
         case int.compare(a.season_number, b.season_number) {
@@ -301,4 +320,302 @@ fn extract_year(date: Option(String)) -> Option(Int) {
     }
     None -> None
   }
+}
+
+// ---------------------------------------------------------------------------
+// Overview endpoint processing
+// ---------------------------------------------------------------------------
+
+/// Build the processed overview response with downloading and missing categories.
+/// TV shows with multiple Jellyseerr requests are merged into single entries.
+pub fn get_overview(config: Config) -> OverviewResponse {
+  let requests = get_all_requests(config)
+
+  // Separate into downloading and missing
+  let downloading = list.filter(requests, is_actively_downloading)
+  let missing =
+    list.filter(requests, fn(r) {
+      { r.is_missing || r.is_not_available } && !is_actively_downloading(r)
+    })
+
+  // Merge same-series TV shows and convert to ProcessedRequest
+  let processed_downloading = merge_and_process(downloading, True)
+  let processed_missing = merge_and_process(missing, False)
+
+  OverviewResponse(
+    downloading: processed_downloading,
+    missing: processed_missing,
+  )
+}
+
+/// Check if a request has any active download status
+fn is_actively_downloading(req: MediaRequest) -> Bool {
+  let main_active = case req.download_status {
+    Some(status) -> is_active_status(status)
+    None -> False
+  }
+  case main_active {
+    True -> True
+    False ->
+      list.any(req.episode_downloads, fn(ep) {
+        case ep.download_status {
+          Some(status) -> is_active_status(status)
+          None -> False
+        }
+      })
+  }
+}
+
+fn is_active_status(status: DownloadStatus) -> Bool {
+  case status {
+    Downloading | Queued | Paused | Stalled -> True
+    _ -> False
+  }
+}
+
+/// Merge same-series TV shows and convert all requests to ProcessedRequest
+fn merge_and_process(
+  requests: List(MediaRequest),
+  is_downloading: Bool,
+) -> List(ProcessedRequest) {
+  // Separate movies and TV shows
+  let movies =
+    list.filter(requests, fn(r) {
+      case r.media_type {
+        Movie -> True
+        _ -> False
+      }
+    })
+  let tv_shows =
+    list.filter(requests, fn(r) {
+      case r.media_type {
+        TvShow -> True
+        _ -> False
+      }
+    })
+
+  // Convert movies directly
+  let processed_movies = list.map(movies, fn(r) { movie_to_processed(r) })
+
+  // Group TV shows by series identity and merge
+  let tv_groups = group_tv_by_series(tv_shows)
+  let processed_tv =
+    dict.values(tv_groups)
+    |> list.map(fn(group) { merge_tv_group(group, is_downloading) })
+
+  list.append(processed_movies, processed_tv)
+}
+
+/// Convert a movie MediaRequest to a ProcessedRequest
+fn movie_to_processed(r: MediaRequest) -> ProcessedRequest {
+  let effective_status = case r.download_status {
+    Some(status) ->
+      case is_active_status(status) {
+        True -> Some(download_status_to_string(status))
+        False -> None
+      }
+    None -> None
+  }
+
+  ProcessedRequest(
+    title: r.title,
+    media_type: "movie",
+    poster_url: r.poster_url,
+    year: r.year,
+    requested_by: r.requested_by,
+    effective_status: effective_status,
+    progress: r.download_progress,
+    speed: r.download_speed,
+    eta: r.eta_seconds,
+    quality: r.quality,
+    seasons: [],
+  )
+}
+
+/// Group TV shows by series identity (tvdb_id or title+year fallback)
+fn group_tv_by_series(
+  shows: List(MediaRequest),
+) -> dict.Dict(String, List(MediaRequest)) {
+  list.fold(shows, dict.new(), fn(acc, show) {
+    let key = case show.tvdb_id {
+      Some(id) -> "tvdb:" <> int.to_string(id)
+      None ->
+        "title:"
+        <> show.title
+        <> "|"
+        <> option.map(show.year, int.to_string)
+        |> option.unwrap("")
+    }
+    let existing = dict.get(acc, key) |> result.unwrap([])
+    dict.insert(acc, key, list.append(existing, [show]))
+  })
+}
+
+/// Merge a group of TV show requests into a single ProcessedRequest
+fn merge_tv_group(
+  group: List(MediaRequest),
+  is_downloading: Bool,
+) -> ProcessedRequest {
+  // Use first request as base for metadata
+  let assert [base, ..] = group
+
+  // Collect all episode downloads, de-duplicate by season+episode
+  let all_episodes =
+    list.flat_map(group, fn(r) { r.episode_downloads })
+    |> dedup_episodes
+
+  // Filter out completed/seeding if this is a downloading group
+  let active_episodes = case is_downloading {
+    True -> list.filter(all_episodes, is_episode_active)
+    False -> all_episodes
+  }
+
+  // Group by season and build SeasonProgress entries
+  let seasons = build_season_groups(active_episodes)
+
+  // Compute effective status across all active episodes
+  let effective_status = case is_downloading {
+    True -> best_episode_status(active_episodes)
+    False -> None
+  }
+
+  ProcessedRequest(
+    title: base.title,
+    media_type: "tv",
+    poster_url: base.poster_url,
+    year: base.year,
+    requested_by: base.requested_by,
+    effective_status: effective_status,
+    progress: None,
+    speed: None,
+    eta: None,
+    quality: None,
+    seasons: seasons,
+  )
+}
+
+/// De-duplicate episodes by season_number + episode_number, keeping the first occurrence
+fn dedup_episodes(episodes: List(EpisodeDownload)) -> List(EpisodeDownload) {
+  let #(_, result) =
+    list.fold(episodes, #(dict.new(), []), fn(acc, ep) {
+      let #(seen, kept) = acc
+      let key =
+        int.to_string(ep.season_number) <> "-" <> int.to_string(ep.episode_number)
+      case dict.get(seen, key) {
+        Ok(_) -> #(seen, kept)
+        Error(_) -> #(dict.insert(seen, key, True), list.append(kept, [ep]))
+      }
+    })
+  result
+}
+
+/// Check if an episode download is still active (not completed/seeding)
+fn is_episode_active(ep: EpisodeDownload) -> Bool {
+  case ep.download_status {
+    Some(Completed) | Some(Seeding) -> False
+    _ -> {
+      case ep.download_progress {
+        Some(p) if p >=. 100.0 -> False
+        _ -> True
+      }
+    }
+  }
+}
+
+/// Group episodes by season number and compute aggregates
+fn build_season_groups(episodes: List(EpisodeDownload)) -> List(SeasonProgress) {
+  // Group by season number
+  let grouped =
+    list.fold(episodes, dict.new(), fn(acc, ep) {
+      let existing = dict.get(acc, ep.season_number) |> result.unwrap([])
+      dict.insert(acc, ep.season_number, list.append(existing, [ep]))
+    })
+
+  dict.to_list(grouped)
+  |> list.map(fn(pair) {
+    let #(season_num, eps) = pair
+    let ep_count = list.length(eps)
+
+    // Compute aggregates
+    let total_progress =
+      list.fold(eps, 0.0, fn(sum, ep) {
+        sum +. option.unwrap(ep.download_progress, 0.0)
+      })
+    let avg_progress = case ep_count {
+      0 -> 0.0
+      n -> total_progress /. int.to_float(n)
+    }
+    let total_speed =
+      list.fold(eps, 0, fn(sum, ep) { sum + option.unwrap(ep.download_speed, 0) })
+    let max_eta =
+      list.fold(eps, 0, fn(mx, ep) { int.max(mx, option.unwrap(ep.eta_seconds, 0)) })
+
+    // Convert episodes to EpisodeProgress
+    let episode_details =
+      eps
+      |> list.sort(fn(a, b) { int.compare(a.episode_number, b.episode_number) })
+      |> list.map(fn(ep) {
+        EpisodeProgress(
+          episode_number: ep.episode_number,
+          title: ep.episode_title,
+          progress: option.unwrap(ep.download_progress, 0.0),
+          speed: option.unwrap(ep.download_speed, 0),
+          eta: option.unwrap(ep.eta_seconds, 0),
+          status: option.map(ep.download_status, download_status_to_string),
+          quality: ep.quality,
+        )
+      })
+
+    SeasonProgress(
+      season_number: season_num,
+      episode_count: ep_count,
+      progress: round_to_1dp(avg_progress),
+      speed: total_speed,
+      eta: max_eta,
+      episodes: episode_details,
+    )
+  })
+  |> list.sort(fn(a, b) { int.compare(a.season_number, b.season_number) })
+}
+
+/// Determine the best (highest priority) status across episodes
+/// Priority: downloading > paused > queued > stalled
+fn best_episode_status(episodes: List(EpisodeDownload)) -> Option(String) {
+  let best_priority =
+    list.fold(episodes, #(None, -1), fn(acc, ep) {
+      let #(best, best_pri) = acc
+      let pri = case ep.download_status {
+        Some(Downloading) -> 4
+        Some(Paused) -> 3
+        Some(Queued) -> 2
+        Some(Stalled) -> 1
+        _ -> 0
+      }
+      case pri > best_pri {
+        True -> #(ep.download_status, pri)
+        False -> #(best, best_pri)
+      }
+    })
+  case best_priority {
+    #(Some(status), pri) if pri > 0 -> Some(download_status_to_string(status))
+    _ -> Some("downloading")
+  }
+}
+
+fn download_status_to_string(status: DownloadStatus) -> String {
+  case status {
+    Downloading -> "downloading"
+    Seeding -> "seeding"
+    Paused -> "paused"
+    Queued -> "queued"
+    Stalled -> "stalled"
+    Completed -> "completed"
+    request.NotFound -> "not_found"
+  }
+}
+
+/// Round a float to 1 decimal place
+fn round_to_1dp(value: Float) -> Float {
+  let scaled = float.round(value *. 10.0)
+  int.to_float(scaled) /. 10.0
 }
