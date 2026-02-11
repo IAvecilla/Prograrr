@@ -27,6 +27,20 @@ pub type DownloadStatus {
   NotFound
 }
 
+/// Per-episode download info for TV series
+pub type EpisodeDownload {
+  EpisodeDownload(
+    season_number: Int,
+    episode_number: Int,
+    episode_title: Option(String),
+    download_status: Option(DownloadStatus),
+    download_progress: Option(Float),
+    download_speed: Option(Int),
+    eta_seconds: Option(Int),
+    quality: Option(String),
+  )
+}
+
 /// Combined media request with all status information
 pub type MediaRequest {
   MediaRequest(
@@ -55,6 +69,8 @@ pub type MediaRequest {
     is_missing: Bool,
     // Not available: monitored, no file, not available yet (not released)
     is_not_available: Bool,
+    // Per-episode download tracking for TV series
+    episode_downloads: List(EpisodeDownload),
   )
 }
 
@@ -96,6 +112,9 @@ pub type ArrQueueItem {
     tvdb_id: Option(Int),
     download_id: Option(String),
     quality: Option(String),
+    season_number: Option(Int),
+    episode_number: Option(Int),
+    episode_title: Option(String),
   )
 }
 
@@ -154,11 +173,25 @@ pub fn media_request_to_json(request: MediaRequest) -> Json {
     #("quality", option_to_json(request.quality, json.string)),
     #("isMissing", json.bool(request.is_missing)),
     #("isNotAvailable", json.bool(request.is_not_available)),
+    #("episodeDownloads", json.array(request.episode_downloads, episode_download_to_json)),
   ])
 }
 
 pub fn media_requests_to_json(requests: List(MediaRequest)) -> Json {
   json.array(requests, media_request_to_json)
+}
+
+fn episode_download_to_json(ep: EpisodeDownload) -> Json {
+  json.object([
+    #("seasonNumber", json.int(ep.season_number)),
+    #("episodeNumber", json.int(ep.episode_number)),
+    #("episodeTitle", option_to_json(ep.episode_title, json.string)),
+    #("downloadStatus", option_to_json(ep.download_status, download_status_to_json)),
+    #("downloadProgress", option_to_json(ep.download_progress, json.float)),
+    #("downloadSpeed", option_to_json(ep.download_speed, json.int)),
+    #("etaSeconds", option_to_json(ep.eta_seconds, json.int)),
+    #("quality", option_to_json(ep.quality, json.string)),
+  ])
 }
 
 fn media_type_to_json(mt: MediaType) -> Json {

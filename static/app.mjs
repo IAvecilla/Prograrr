@@ -62,11 +62,19 @@ function formatQuality(quality) {
 }
 
 // Tab filtering
+function isActiveDownloadStatus(status) {
+  return status === 'downloading' ||
+         status === 'queued' ||
+         status === 'paused' ||
+         status === 'stalled';
+}
+
 function isActivelyDownloading(r) {
-  return r.downloadStatus === 'downloading' ||
-         r.downloadStatus === 'queued' ||
-         r.downloadStatus === 'paused' ||
-         r.downloadStatus === 'stalled';
+  if (isActiveDownloadStatus(r.downloadStatus)) return true;
+  if (r.episodeDownloads && r.episodeDownloads.length > 0) {
+    return r.episodeDownloads.some(ep => isActiveDownloadStatus(ep.downloadStatus));
+  }
+  return false;
 }
 
 function filterRequests(requests, tab) {
@@ -228,7 +236,10 @@ function renderBadges(request) {
 
   // Actively downloading takes priority
   if (isActivelyDownloading(request)) {
-    badges.push(`<span class="badge badge-download badge-${request.downloadStatus}">${formatStatus(request.downloadStatus)}</span>`);
+    const status = request.downloadStatus && isActiveDownloadStatus(request.downloadStatus)
+      ? request.downloadStatus
+      : request.episodeDownloads?.find(ep => isActiveDownloadStatus(ep.downloadStatus))?.downloadStatus || 'downloading';
+    badges.push(`<span class="badge badge-download badge-${status}">${formatStatus(status)}</span>`);
   } else if (request.isMissing) {
     // Missing (file was deleted)
     badges.push(`<span class="badge badge-missing">Missing</span>`);
@@ -252,6 +263,11 @@ function renderBadges(request) {
 }
 
 function renderProgress(request) {
+  // For TV shows with episode downloads, render per-episode progress
+  if (request.mediaType === 'tv' && request.episodeDownloads && request.episodeDownloads.length > 0) {
+    return renderEpisodeDownloads(request.episodeDownloads);
+  }
+
   // Don't show progress bar if no progress, completed, or at 100%
   if (request.downloadProgress == null) return '';
   if (request.downloadProgress >= 100) return '';
@@ -272,6 +288,61 @@ function renderProgress(request) {
         <span class="progress-percent">${progress}%</span>
         ${speed}
         ${eta}
+      </div>
+    </div>
+  `;
+}
+
+function renderEpisodeDownloads(episodes) {
+  // Group episodes by season
+  const seasons = {};
+  for (const ep of episodes) {
+    const s = ep.seasonNumber;
+    if (!seasons[s]) seasons[s] = [];
+    seasons[s].push(ep);
+  }
+
+  const seasonKeys = Object.keys(seasons).sort((a, b) => Number(a) - Number(b));
+
+  return `
+    <div class="episode-downloads">
+      ${seasonKeys.map(s => `
+        <div class="season-group">
+          <span class="season-label">Season ${s}</span>
+          ${seasons[s].map(renderEpisodeProgress).join('')}
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderEpisodeProgress(ep) {
+  const progress = ep.downloadProgress != null ? ep.downloadProgress.toFixed(1) : '0.0';
+  const label = ep.episodeNumber === 0
+    ? 'Season Pack'
+    : `E${String(ep.episodeNumber).padStart(2, '0')}${ep.episodeTitle ? ' - ' + ep.episodeTitle : ''}`;
+
+  const speed = ep.downloadSpeed ? `<span class="download-speed">${formatSpeed(ep.downloadSpeed)}</span>` : '';
+  const eta = ep.etaSeconds && ep.etaSeconds > 0 && ep.etaSeconds < 8640000
+    ? `<span class="eta">${formatEta(ep.etaSeconds)}</span>`
+    : '';
+
+  // Don't show bar for completed/seeding episodes
+  if (ep.downloadStatus === 'seeding' || ep.downloadStatus === 'completed') return '';
+  if (ep.downloadProgress != null && ep.downloadProgress >= 100) return '';
+
+  return `
+    <div class="episode-row">
+      <div class="episode-header">
+        <span class="episode-label">${label}</span>
+        <div class="episode-stats">
+          <span class="progress-percent">${progress}%</span>
+          ${speed}
+          ${eta}
+        </div>
+      </div>
+      <div class="progress-bar-sm">
+        <div class="progress-fill" style="width: ${progress}%"></div>
       </div>
     </div>
   `;

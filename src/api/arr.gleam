@@ -35,7 +35,7 @@ fn get_queue(
 ) -> Result(List(ArrQueueItem), ArrError) {
   // includeMovie/includeSeries adds the full movie/series object with tmdbId/tvdbId
   let url = case is_sonarr {
-    True -> base_url <> "/api/v3/queue?pageSize=100&includeUnknownSeriesItems=true&includeSeries=true"
+    True -> base_url <> "/api/v3/queue?pageSize=100&includeUnknownSeriesItems=true&includeSeries=true&includeEpisode=true"
     False -> base_url <> "/api/v3/queue?pageSize=100&includeMovie=true"
   }
   let headers = [#("X-Api-Key", api_key), #("Accept", "application/json")]
@@ -78,6 +78,16 @@ fn queue_item_decoder() -> decode.Decoder(ArrQueueItem) {
   use quality <- decode.optional_field("quality", None, decode.optional(quality_decoder()))
   let quality_name = option.flatten(quality)
 
+  // Parse season number (top-level field from Sonarr)
+  use season_number <- decode.optional_field("seasonNumber", None, decode.optional(decode.int))
+
+  // Parse episode info from nested episode object (Sonarr with includeEpisode=true)
+  use episode <- decode.optional_field("episode", None, decode.optional(episode_info_decoder()))
+  let #(episode_number, episode_title) = case episode {
+    option.Some(ep) -> ep
+    option.None -> #(None, None)
+  }
+
   decode.success(ArrQueueItem(
     id: id,
     title: title,
@@ -88,6 +98,9 @@ fn queue_item_decoder() -> decode.Decoder(ArrQueueItem) {
     tvdb_id: tvdb_id,
     download_id: download_id,
     quality: quality_name,
+    season_number: season_number,
+    episode_number: episode_number,
+    episode_title: episode_title,
   ))
 }
 
@@ -110,6 +123,12 @@ fn quality_decoder() -> decode.Decoder(Option(String)) {
 fn quality_name_decoder() -> decode.Decoder(Option(String)) {
   use name <- decode.optional_field("name", None, decode.optional(decode.string))
   decode.success(name)
+}
+
+fn episode_info_decoder() -> decode.Decoder(#(Option(Int), Option(String))) {
+  use episode_number <- decode.optional_field("episodeNumber", None, decode.optional(decode.int))
+  use title <- decode.optional_field("title", None, decode.optional(decode.string))
+  decode.success(#(episode_number, title))
 }
 
 /// Fetch all movies from Radarr with their monitored/hasFile status

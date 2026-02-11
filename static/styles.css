@@ -367,6 +367,81 @@ body {
   margin-left: auto;
 }
 
+/* Episode Downloads */
+.episode-downloads {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.season-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.season-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.episode-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.episode-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.episode-label {
+  font-size: 0.75rem;
+  color: var(--text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+
+.episode-stats {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.675rem;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.episode-stats .download-speed {
+  color: var(--accent-green);
+}
+
+.episode-stats .eta {
+  color: var(--text-muted);
+  margin-left: 0;
+}
+
+.progress-bar-sm {
+  height: 6px;
+  background: var(--bg-secondary);
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.progress-bar-sm .progress-fill {
+  height: 100%;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .header {

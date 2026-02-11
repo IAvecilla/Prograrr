@@ -4,12 +4,14 @@ import api/qbittorrent
 import config.{type Config}
 import gleam/int
 import gleam/list
+import gleam/order
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import models/request.{
-  type ArrQueueItem, type JellyseerrRequest, type MediaRequest, type RadarrMovie,
-  type SonarrSeries, type TorrentInfo, MediaRequest, Movie, TvShow,
+  type ArrQueueItem, type EpisodeDownload, type JellyseerrRequest,
+  type MediaRequest, type RadarrMovie, type SonarrSeries, type TorrentInfo,
+  EpisodeDownload, MediaRequest, Movie, TvShow,
 }
 
 /// Fetch and aggregate all data from configured services
@@ -85,10 +87,27 @@ fn combine_request(
     None -> #("Unknown", None, None, None, None)
   }
 
-  // Find matching queue item from Sonarr/Radarr by external ID
+  // Find matching queue item(s) from Sonarr/Radarr by external ID
   let queue_item = case media_type {
     Movie -> find_queue_item(radarr_queue, tmdb_id, fn(i) { i.tmdb_id })
     TvShow -> find_queue_item(sonarr_queue, tvdb_id, fn(i) { i.tvdb_id })
+  }
+
+  // For TV shows, find ALL matching queue items for per-episode tracking
+  let episode_downloads = case media_type {
+    TvShow -> {
+      let all_items =
+        find_all_queue_items(sonarr_queue, tvdb_id, fn(i) { i.tvdb_id })
+      all_items
+      |> list.map(fn(qi) { build_episode_download(qi, torrents) })
+      |> list.sort(fn(a, b) {
+        case int.compare(a.season_number, b.season_number) {
+          order.Eq -> int.compare(a.episode_number, b.episode_number)
+          other -> other
+        }
+      })
+    }
+    Movie -> []
   }
 
   // Find matching torrent from qBittorrent
@@ -133,6 +152,7 @@ fn combine_request(
     tvdb_id: tvdb_id,
     is_missing: is_missing,
     is_not_available: is_not_available,
+    episode_downloads: episode_downloads,
   )
 }
 
@@ -188,6 +208,43 @@ fn find_queue_item(
       |> option.from_result
     None -> None
   }
+}
+
+/// Find ALL queue items matching an external ID
+fn find_all_queue_items(
+  queue: List(ArrQueueItem),
+  target_id: Option(Int),
+  get_id: fn(ArrQueueItem) -> Option(Int),
+) -> List(ArrQueueItem) {
+  case target_id {
+    Some(id) ->
+      queue
+      |> list.filter(fn(item) { get_id(item) == Some(id) })
+    None -> []
+  }
+}
+
+/// Build an EpisodeDownload from a queue item by finding its torrent
+fn build_episode_download(
+  qi: ArrQueueItem,
+  torrents: List(TorrentInfo),
+) -> EpisodeDownload {
+  let torrent = case qi.download_id {
+    Some(dl_id) -> find_torrent_by_hash(torrents, dl_id)
+    None -> None
+  }
+
+  EpisodeDownload(
+    season_number: option.unwrap(qi.season_number, 0),
+    episode_number: option.unwrap(qi.episode_number, 0),
+    episode_title: qi.episode_title,
+    download_status: torrent
+      |> option.map(fn(t) { request.torrent_state_to_download_status(t.state) }),
+    download_progress: torrent |> option.map(fn(t) { t.progress *. 100.0 }),
+    download_speed: torrent |> option.map(fn(t) { t.dlspeed }),
+    eta_seconds: torrent |> option.map(fn(t) { t.eta }),
+    quality: qi.quality,
+  )
 }
 
 fn find_torrent_by_hash(
