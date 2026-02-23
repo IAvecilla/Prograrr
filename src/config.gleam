@@ -6,6 +6,7 @@ import gleam/result
 pub type Config {
   Config(
     port: Int,
+    api_key: String,
     jellyseerr_url: String,
     jellyseerr_api_key: String,
     sonarr_url: String,
@@ -15,12 +16,15 @@ pub type Config {
     qbittorrent_url: String,
     qbittorrent_username: String,
     qbittorrent_password: String,
+    sabnzbd_url: String,
+    sabnzbd_api_key: String,
   )
 }
 
 /// Load configuration from environment variables
 pub fn load() -> Result(Config, String) {
   use port <- result.try(get_env_int("PORT", 3000))
+  use api_key <- result.try(get_env("PROGRARR_API_KEY", ""))
   use jellyseerr_url <- result.try(get_env("JELLYSEERR_URL", "http://localhost:5055"))
   use jellyseerr_api_key <- result.try(get_env_required("JELLYSEERR_API_KEY"))
   use sonarr_url <- result.try(get_env("SONARR_URL", "http://localhost:8989"))
@@ -30,9 +34,12 @@ pub fn load() -> Result(Config, String) {
   use qbittorrent_url <- result.try(get_env("QBITTORRENT_URL", "http://localhost:8080"))
   use qbittorrent_username <- result.try(get_env("QBITTORRENT_USERNAME", "admin"))
   use qbittorrent_password <- result.try(get_env("QBITTORRENT_PASSWORD", "adminadmin"))
+  use sabnzbd_url <- result.try(get_env("SABNZBD_URL", "http://localhost:8080"))
+  use sabnzbd_api_key <- result.try(get_env("SABNZBD_API_KEY", ""))
 
   Ok(Config(
     port: port,
+    api_key: api_key,
     jellyseerr_url: jellyseerr_url,
     jellyseerr_api_key: jellyseerr_api_key,
     sonarr_url: sonarr_url,
@@ -42,6 +49,8 @@ pub fn load() -> Result(Config, String) {
     qbittorrent_url: qbittorrent_url,
     qbittorrent_username: qbittorrent_username,
     qbittorrent_password: qbittorrent_password,
+    sabnzbd_url: sabnzbd_url,
+    sabnzbd_api_key: sabnzbd_api_key,
   ))
 }
 

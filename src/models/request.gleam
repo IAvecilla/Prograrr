@@ -16,7 +16,7 @@ pub type RequestStatus {
   Unknown
 }
 
-/// Download status from qBittorrent
+/// Download status from qBittorrent or SABnzbd
 pub type DownloadStatus {
   Downloading
   Seeding
@@ -245,6 +245,19 @@ pub fn jellyseerr_status_to_request_status(status: Int) -> RequestStatus {
     3 -> Processing
     4 | 5 -> Available
     _ -> Unknown
+  }
+}
+
+/// Convert SABnzbd status to DownloadStatus.
+pub fn sabnzbd_state_to_download_status(state: String) -> DownloadStatus {
+  case state {
+    "Downloading" -> Downloading
+    "Queued" -> Queued
+    "Paused" -> Paused
+    "Verifying" | "Extracting" | "Repairing" -> Downloading
+    "Completed" -> Completed
+    "Failed" -> NotFound
+    _ -> NotFound
   }
 }
 

@@ -40,6 +40,7 @@ pub fn main() -> Nil {
       io.println("")
       io.println("Optional environment variables:")
       io.println("  PORT               - Server port (default: 3000)")
+      io.println("  PROGRARR_API_KEY   - Protect API routes with an API key")
       io.println("  JELLYSEERR_URL     - Jellyseerr URL (default: http://localhost:5055)")
       io.println("  SONARR_URL         - Sonarr URL (default: http://localhost:8989)")
       io.println("  RADARR_URL         - Radarr URL (default: http://localhost:7878)")

@@ -1,6 +1,6 @@
 # Prograrr
 
-A lightweight dashboard that aggregates and displays real-time download progress from your *arr stack (Sonarr, Radarr) combined with Jellyseerr requests and qBittorrent status.
+A lightweight dashboard that aggregates and displays real-time download progress from your *arr stack (Sonarr, Radarr) combined with Jellyseerr requests and qBittorrent/SABnzbd status.
 
 ![Prograrr Dashboard](https://img.shields.io/badge/docker-ignacioavecilla%2Fprograrr-blue)
 
@@ -11,12 +11,14 @@ A lightweight dashboard that aggregates and displays real-time download progress
 - Unified view of all media requests from Jellyseerr
 - Real-time download progress from Sonarr/Radarr queues
 - Torrent status and speed from qBittorrent
+- Usenet download progress from SABnzbd (optional)
+- Optional API key authentication to protect API routes
 - Clean, modern dark UI
 - Automatic refresh every 15 seconds
 
 ## How It Works
 
-Prograrr aggregates data from four services to provide a complete view of your media downloads:
+Prograrr aggregates data from multiple services to provide a complete view of your media downloads:
 
 | Service | Data Provided |
 |---------|---------------|
@@ -24,6 +26,7 @@ Prograrr aggregates data from four services to provide a complete view of your m
 | **Sonarr** | TV show download queue, TVDB ID, download hash |
 | **Radarr** | Movie download queue, TMDB ID, download hash |
 | **qBittorrent** | Download progress %, speed, ETA, torrent state |
+| **SABnzbd** *(optional)* | Usenet download progress %, speed, ETA, state |
 
 **Data flow:**
 ```
@@ -31,10 +34,10 @@ Jellyseerr (request info: title, poster, who requested)
     ↓ matched by TMDB/TVDB ID
 Sonarr/Radarr (queue item with download hash)
     ↓ matched by hash
-qBittorrent (real-time progress, speed, ETA)
+qBittorrent / SABnzbd (real-time progress, speed, ETA)
 ```
 
-All four services are required to display complete information. Without Jellyseerr you lose request metadata, without Sonarr/Radarr you can't link requests to downloads, and without qBittorrent you lose real-time progress.
+Jellyseerr, Sonarr/Radarr, and at least one download client (qBittorrent or SABnzbd) are required to display complete information. SABnzbd is optional and can be used alongside qBittorrent.
 
 ## Quick Start
 
@@ -51,6 +54,8 @@ docker run -d \
   -e QBITTORRENT_URL=http://qbittorrent:8080 \
   -e QBITTORRENT_USERNAME=admin \
   -e QBITTORRENT_PASSWORD=adminadmin \
+  -e SABNZBD_URL=http://sabnzbd:8080 \
+  -e SABNZBD_API_KEY=your_sabnzbd_api_key \
   ignacioavecilla/prograrr:latest
 ```
 
@@ -77,6 +82,8 @@ services:
       - QBITTORRENT_URL=http://qbittorrent:8080
       - QBITTORRENT_USERNAME=${QBITTORRENT_USERNAME}
       - QBITTORRENT_PASSWORD=${QBITTORRENT_PASSWORD}
+      - SABNZBD_URL=http://sabnzbd:8080
+      - SABNZBD_API_KEY=${SABNZBD_API_KEY}
     ports:
       - "3000:3000"
     restart: unless-stopped
@@ -116,6 +123,7 @@ networks:
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `PORT` | No | `3000` | Port the web server listens on |
+| `PROGRARR_API_KEY` | No | - | When set, all API routes require `X-Api-Key` header |
 | `JELLYSEERR_URL` | No | `http://localhost:5055` | Jellyseerr instance URL |
 | `JELLYSEERR_API_KEY` | Yes | - | Jellyseerr API key |
 | `SONARR_URL` | No | `http://localhost:8989` | Sonarr instance URL |
@@ -125,6 +133,8 @@ networks:
 | `QBITTORRENT_URL` | No | `http://localhost:8080` | qBittorrent Web UI URL |
 | `QBITTORRENT_USERNAME` | No | `admin` | qBittorrent username |
 | `QBITTORRENT_PASSWORD` | No | `adminadmin` | qBittorrent password |
+| `SABNZBD_URL` | No | `http://localhost:8080` | SABnzbd URL |
+| `SABNZBD_API_KEY` | No | - | SABnzbd API key (leave empty to disable) |
 | `TZ` | No | `UTC` | Timezone |
 
 ## Getting API Keys
@@ -147,11 +157,17 @@ networks:
 2. Ensure **Web User Interface** is enabled
 3. Note the username and password configured
 
+### SABnzbd
+1. Open SABnzbd and go to **Config** > **General**
+2. Copy the **API Key** (full access)
+
 ## API Endpoints
+
+When `PROGRARR_API_KEY` is set, protected endpoints require the `X-Api-Key` header. The `/api/health` endpoint is always public.
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/requests` | Returns aggregated media requests with download status |
+| `GET /api/requests` | Returns aggregated media requests with download status. Supports `?tmdbId=` filter |
 | `GET /api/overview` | Returns processed, ready-to-render data split into downloading and missing categories |
 | `GET /api/health` | Health check endpoint |
 | `GET /api/debug` | Debug info showing connection status to all services |

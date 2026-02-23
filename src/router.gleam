@@ -3,11 +3,15 @@ import api/arr
 import api/http_client
 import api/jellyseerr
 import api/qbittorrent
+import api/sabnzbd
 import config.{type Config}
 import cors_builder as cors
 import gleam/http.{Get, Options}
+import gleam/http/request as http_request
+import gleam/int
 import gleam/json
 import gleam/list
+import gleam/option
 import gleam/string
 import gleam/string_tree
 import models/overview
@@ -26,15 +30,16 @@ pub fn handle_request(req: Request, ctx: Context) -> Response {
     cors.new()
       |> cors.allow_origin("*")
       |> cors.allow_method(Get)
-      |> cors.allow_header("Content-Type"),
+      |> cors.allow_header("Content-Type")
+      |> cors.allow_header("X-Api-Key"),
   )
 
   case wisp.path_segments(req) {
-    // API routes
-    ["api", "requests"] -> handle_requests(req, ctx)
-    ["api", "overview"] -> handle_overview(req, ctx)
+    // API routes (protected when PROGRARR_API_KEY is set)
+    ["api", "requests"] -> with_auth(req, ctx, handle_requests)
+    ["api", "overview"] -> with_auth(req, ctx, handle_overview)
     ["api", "health"] -> handle_health(req)
-    ["api", "debug"] -> handle_debug(req, ctx)
+    ["api", "debug"] -> with_auth(req, ctx, handle_debug)
 
     // Static files
     ["static", ..rest] -> serve_static(rest, ctx.static_dir)
@@ -44,12 +49,48 @@ pub fn handle_request(req: Request, ctx: Context) -> Response {
   }
 }
 
+fn with_auth(
+  req: Request,
+  ctx: Context,
+  handler: fn(Request, Context) -> Response,
+) -> Response {
+  case ctx.config.api_key {
+    // No API key configured — allow all requests
+    "" -> handler(req, ctx)
+    key -> {
+      let provided = http_request.get_header(req, "x-api-key")
+      case provided {
+        Ok(value) if value == key -> handler(req, ctx)
+        _ -> {
+          let body =
+            json.object([#("error", json.string("Unauthorized"))])
+            |> json.to_string_tree
+            |> string_tree.to_string
+          wisp.json_response(body, 401)
+        }
+      }
+    }
+  }
+}
+
 fn handle_requests(req: Request, ctx: Context) -> Response {
   case req.method {
     Get -> {
       let requests = aggregator.get_all_requests(ctx.config)
+
+      // Filter by tmdbId query param if provided
+      let filtered = case wisp.get_query(req) |> list.find(fn(pair) { pair.0 == "tmdbId" }) {
+        Ok(#(_, value)) -> {
+          case int.parse(value) {
+            Ok(tmdb_id) -> list.filter(requests, fn(r) { r.tmdb_id == option.Some(tmdb_id) })
+            Error(_) -> requests
+          }
+        }
+        Error(_) -> requests
+      }
+
       let body =
-        request.media_requests_to_json(requests)
+        request.media_requests_to_json(filtered)
         |> json.to_string_tree
         |> string_tree.to_string
 
@@ -134,12 +175,40 @@ fn handle_debug(_req: Request, ctx: Context) -> Response {
     ])
   }
 
+  let sabnzbd_status = case ctx.config.sabnzbd_api_key {
+    "" -> json.object([
+      #("status", json.string("disabled")),
+    ])
+    api_key -> {
+      let sab_result = sabnzbd.get_downloads(ctx.config.sabnzbd_url, api_key)
+      case sab_result {
+        Ok(downloads) -> json.object([
+          #("status", json.string("ok")),
+          #("count", json.int(list.length(downloads))),
+          #("downloads", json.array(downloads, fn(t: request.TorrentInfo) {
+            json.object([
+              #("name", json.string(t.name)),
+              #("nzo_id", json.string(t.hash)),
+              #("progress", json.float(t.progress)),
+              #("state", json.string(t.state)),
+            ])
+          })),
+        ])
+        Error(e) -> json.object([
+          #("status", json.string("error")),
+          #("error", json.string(debug_sabnzbd_error(e))),
+        ])
+      }
+    }
+  }
+
   let body =
     json.object([
       #("jellyseerr", jellyseerr_status),
       #("sonarr", sonarr_status),
       #("radarr", radarr_status),
       #("qbittorrent", qbit_status),
+      #("sabnzbd", sabnzbd_status),
     ])
     |> json.to_string_tree
     |> string_tree.to_string
@@ -175,6 +244,13 @@ fn format_arr_status(
         #("status", json.string("error")),
         #("error", json.string(debug_arr_error(e))),
       ])
+  }
+}
+
+fn debug_sabnzbd_error(e: sabnzbd.SabnzbdError) -> String {
+  case e {
+    sabnzbd.HttpError(http_err) -> "HTTP error: " <> http_client.error_message(http_err)
+    sabnzbd.ParseError(msg) -> "Parse error: " <> msg
   }
 }
 

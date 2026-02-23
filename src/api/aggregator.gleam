@@ -1,6 +1,7 @@
 import api/arr
 import api/jellyseerr
 import api/qbittorrent
+import api/sabnzbd
 import config.{type Config}
 import gleam/dict
 import gleam/float
@@ -52,6 +53,16 @@ pub fn get_all_requests(config: Config) -> List(MediaRequest) {
       config.qbittorrent_password,
     )
     |> result.unwrap([])
+
+  // Fetch SABnzbd downloads if configured
+  let sabnzbd_downloads = case config.sabnzbd_api_key {
+    "" -> []
+    api_key ->
+      sabnzbd.get_downloads(config.sabnzbd_url, api_key)
+      |> result.unwrap([])
+  }
+
+  let torrents = list.append(torrents, sabnzbd_downloads)
 
   // Combine all data
   jellyseerr_requests
