@@ -11,10 +11,7 @@ A lightweight dashboard that aggregates and displays real-time download progress
 - Unified view of all media requests from Jellyseerr
 - Real-time download progress from Sonarr/Radarr queues
 - Torrent status and speed from qBittorrent
-- Usenet download progress from SABnzbd (optional)
-- Optional API key authentication to protect API routes
-- Clean, modern dark UI
-- Automatic refresh every 15 seconds
+- Usenet download progress from SABnzbd
 
 ## How It Works
 
@@ -26,7 +23,7 @@ Prograrr aggregates data from multiple services to provide a complete view of yo
 | **Sonarr** | TV show download queue, TVDB ID, download hash |
 | **Radarr** | Movie download queue, TMDB ID, download hash |
 | **qBittorrent** | Download progress %, speed, ETA, torrent state |
-| **SABnzbd** *(optional)* | Usenet download progress %, speed, ETA, state |
+| **SABnzbd** | Usenet download progress %, speed, ETA, state |
 
 **Data flow:**
 ```
@@ -174,13 +171,13 @@ When `PROGRARR_API_KEY` is set, protected endpoints require the `X-Api-Key` head
 
 ### `GET /api/overview`
 
-A processed endpoint designed for client integrations (e.g. Jellyfin plugins). Returns two categories — **downloading** (active downloads) and **missing** (not found / not available) — with TV shows merged into single entries and episodes grouped by season.
+A processed endpoint designed for client integrations (e.g. Jellyfin plugins). Returns two categories *downloading* (active downloads) and *missing* (not found / not available), with TV shows merged into single entries and episodes grouped by season.
 
 Key behaviors:
 - **Movies** have top-level `progress`/`speed`/`eta`/`quality` fields; `seasons` is `[]`
 - **TV shows** have per-season aggregates (avg progress, total speed, max ETA) with per-episode detail; top-level progress fields are `null`
 - Multiple Jellyseerr requests for different seasons of the same series are merged into one entry
-- Completed/seeding episodes are filtered out — only active downloads are shown
+- Completed/seeding episodes are filtered out, only active downloads are shown.
 - `effectiveStatus` reflects the best status across all episodes (`downloading` > `paused` > `queued` > `stalled`)
 
 Response shape:
@@ -250,31 +247,6 @@ Response shape:
     }
   ]
 }
-```
-
-## Troubleshooting
-
-### "Loading requests..." forever
-- Check that Prograrr can reach your services (use `/api/debug` endpoint)
-- Ensure Prograrr is on the same Docker network as your other services
-- Verify API keys are correct
-
-### Services showing "HTTP error"
-- Verify the service URLs are correct
-- Check if services are accessible from the Prograrr container
-- If using Docker, use container names instead of `localhost`
-
-### Network Issues with Docker
-If Prograrr can't connect to your services, make sure they're on the same Docker network:
-
-```bash
-# Check what network your services are on
-docker inspect <container_name> --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}'
-
-# Add external network to your docker-compose.yml
-networks:
-  your_network_name:
-    external: true
 ```
 
 ## Development
