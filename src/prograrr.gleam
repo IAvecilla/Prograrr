@@ -8,10 +8,8 @@ import wisp
 import wisp/wisp_mist
 
 pub fn main() -> Nil {
-  // Set up logging
   wisp.configure_logger()
 
-  // Load configuration
   case config.load() {
     Ok(cfg) -> {
       io.println("Starting Prograrr on port " <> int.to_string(cfg.port))

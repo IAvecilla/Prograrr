@@ -20,7 +20,6 @@ pub fn get_requests(
   base_url: String,
   api_key: String,
 ) -> Result(List(JellyseerrRequest), JellyseerrError) {
-  // Only fetch recent requests (limit to 20) to reduce load
   let url = base_url <> "/api/v1/request?take=20&skip=0&sort=added"
   let headers = [#("X-Api-Key", api_key), #("Accept", "application/json")]
 
@@ -28,11 +27,9 @@ pub fn get_requests(
     Ok(body) -> {
       case parse_requests_response(body) {
         Ok(requests) -> {
-          // Only enrich non-available requests (status != 3) to reduce API calls
-          // Status 3 = Available (already downloaded, no need for extra details)
           let enriched = list.map(requests, fn(req) {
             case req.status {
-              3 -> req  // Skip enrichment for available items
+              3 -> req
               _ -> enrich_request(req, base_url, api_key)
             }
           })
@@ -56,7 +53,6 @@ fn enrich_request(req: JellyseerrRequest, base_url: String, api_key: String) -> 
           }
           case get_media_details(base_url, api_key, media_type, tmdb_id) {
             Ok(details) ->
-              // Preserve tvdb_id from original media since details endpoint doesn't include it
               JellyseerrRequest(
                 ..req,
                 media: Some(JellyseerrMedia(..details, tvdb_id: media.tvdb_id)),

@@ -17,7 +17,6 @@ pub fn get_torrents_with_auth(
   username: String,
   password: String,
 ) -> Result(List(TorrentInfo), QBitError) {
-  // First, authenticate and get session cookie
   let auth_url = base_url <> "/api/v2/auth/login"
   let auth_body = "username=" <> username <> "&password=" <> password
   let auth_headers = [
@@ -28,7 +27,6 @@ pub fn get_torrents_with_auth(
     Ok(auth_resp) -> {
       case auth_resp.cookie {
         Some(cookie) -> {
-          // Use the session cookie to fetch torrents
           let url = base_url <> "/api/v2/torrents/info"
           let headers = [#("Accept", "application/json")]
 
@@ -38,7 +36,6 @@ pub fn get_torrents_with_auth(
           }
         }
         None -> {
-          // No cookie returned, auth might have failed
           Error(AuthError("No session cookie returned from qBittorrent"))
         }
       }

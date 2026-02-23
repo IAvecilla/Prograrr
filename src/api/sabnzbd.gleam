@@ -3,6 +3,7 @@ import gleam/dynamic/decode
 import gleam/float
 import gleam/int
 import gleam/json
+import gleam/result
 import gleam/string
 import models/request.{type TorrentInfo, TorrentInfo}
 
@@ -51,29 +52,22 @@ fn slot_decoder() -> decode.Decoder(TorrentInfo) {
   use nzo_id <- decode.field("nzo_id", decode.string)
   use filename <- decode.field("filename", decode.string)
   use percentage <- decode.field("percentage", string_as_float())
-  use mb <- decode.field("mb", string_as_float())
+  use _mb <- decode.field("mb", string_as_float())
   use mbleft <- decode.field("mbleft", string_as_float())
   use timeleft <- decode.field("timeleft", decode.string)
   use status <- decode.field("status", decode.string)
 
   let progress = percentage /. 100.0
 
-  // Estimate speed from remaining MB and time left
   let eta_seconds = parse_timeleft(timeleft)
   let dlspeed = case eta_seconds > 0 {
     True -> {
       let bytes_left = float.round(mbleft *. 1_048_576.0)
       bytes_left / eta_seconds
     }
-    False ->
-      case mbleft <=. 0.0 && mb >. 0.0 {
-        True -> 0
-        False -> 0
-      }
+    False -> 0
   }
 
-  // Map SABnzbd status to qBittorrent-equivalent state strings
-  // so the shared torrent_state_to_download_status converter works
   let normalized_state = normalize_state(status)
 
   decode.success(TorrentInfo(
@@ -105,9 +99,9 @@ fn string_as_float() -> decode.Decoder(Float) {
 fn parse_timeleft(timeleft: String) -> Int {
   case string.split(timeleft, ":") {
     [h, m, s] -> {
-      let hours = int.parse(h) |> result_unwrap(0)
-      let minutes = int.parse(m) |> result_unwrap(0)
-      let seconds = int.parse(s) |> result_unwrap(0)
+      let hours = int.parse(h) |> result.unwrap(0)
+      let minutes = int.parse(m) |> result.unwrap(0)
+      let seconds = int.parse(s) |> result.unwrap(0)
       hours * 3600 + minutes * 60 + seconds
     }
     _ -> 0
@@ -127,9 +121,3 @@ fn normalize_state(status: String) -> String {
   }
 }
 
-fn result_unwrap(result: Result(a, b), default: a) -> a {
-  case result {
-    Ok(v) -> v
-    Error(_) -> default
-  }
-}

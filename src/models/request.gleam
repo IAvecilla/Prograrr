@@ -248,29 +248,14 @@ pub fn jellyseerr_status_to_request_status(status: Int) -> RequestStatus {
   }
 }
 
-/// Convert SABnzbd status to DownloadStatus.
-pub fn sabnzbd_state_to_download_status(state: String) -> DownloadStatus {
-  case state {
-    "Downloading" -> Downloading
-    "Queued" -> Queued
-    "Paused" -> Paused
-    "Verifying" | "Extracting" | "Repairing" -> Downloading
-    "Completed" -> Completed
-    "Failed" -> NotFound
-    _ -> NotFound
-  }
-}
-
 /// Convert qBittorrent torrent state to DownloadStatus.
 /// See: https://github.com/qbittorrent/qBittorrent/wiki/WebUI-API-(qBittorrent-4.1)#torrent-management
 pub fn torrent_state_to_download_status(state: String) -> DownloadStatus {
   case state {
-    // Downloading states
     "downloading" | "forcedDL" -> Downloading
     "metaDL" | "allocating" | "queuedDL" | "checkingDL" -> Queued
     "stalledDL" -> Stalled
     "pausedDL" -> Paused
-    // Seeding/completed states
     "uploading" | "stalledUP" | "pausedUP" | "queuedUP" | "forcedUP" -> Seeding
     "checkingUP" -> Completed
     _ -> NotFound

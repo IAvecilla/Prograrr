@@ -33,7 +33,6 @@ fn get_queue(
   api_key: String,
   is_sonarr: Bool,
 ) -> Result(List(ArrQueueItem), ArrError) {
-  // includeMovie/includeSeries adds the full movie/series object with tmdbId/tvdbId
   let url = case is_sonarr {
     True -> base_url <> "/api/v3/queue?pageSize=100&includeUnknownSeriesItems=true&includeSeries=true&includeEpisode=true"
     False -> base_url <> "/api/v3/queue?pageSize=100&includeMovie=true"
@@ -66,22 +65,17 @@ fn queue_item_decoder() -> decode.Decoder(ArrQueueItem) {
   use sizeleft <- decode.field("sizeleft", decode.int)
   use download_id <- decode.optional_field("downloadId", None, decode.optional(decode.string))
 
-  // Try to extract TMDB ID from nested movie object (Radarr)
   use movie <- decode.optional_field("movie", None, decode.optional(movie_decoder()))
   let tmdb_id = option.flatten(movie)
 
-  // Try to extract TVDB ID from nested series object (Sonarr)
   use series <- decode.optional_field("series", None, decode.optional(series_decoder()))
   let tvdb_id = option.flatten(series)
 
-  // Try to extract quality name from nested quality.quality.name
   use quality <- decode.optional_field("quality", None, decode.optional(quality_decoder()))
   let quality_name = option.flatten(quality)
 
-  // Parse season number (top-level field from Sonarr)
   use season_number <- decode.optional_field("seasonNumber", None, decode.optional(decode.int))
 
-  // Parse episode info from nested episode object (Sonarr with includeEpisode=true)
   use episode <- decode.optional_field("episode", None, decode.optional(episode_info_decoder()))
   let #(episode_number, episode_title) = case episode {
     option.Some(ep) -> ep
@@ -197,7 +191,6 @@ fn sonarr_series_decoder() -> decode.Decoder(SonarrSeries) {
   use id <- decode.field("id", decode.int)
   use tvdb_id <- decode.optional_field("tvdbId", None, decode.optional(decode.int))
   use monitored <- decode.field("monitored", decode.bool)
-  // Statistics are nested in a "statistics" object
   use statistics <- decode.optional_field(
     "statistics",
     None,

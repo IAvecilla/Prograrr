@@ -24,7 +24,6 @@ import models/request.{
 
 /// Fetch and aggregate all data from configured services
 pub fn get_all_requests(config: Config) -> List(MediaRequest) {
-  // Fetch from all sources, using empty lists on error
   let jellyseerr_requests =
     jellyseerr.get_requests(config.jellyseerr_url, config.jellyseerr_api_key)
     |> result.unwrap([])
@@ -37,7 +36,6 @@ pub fn get_all_requests(config: Config) -> List(MediaRequest) {
     arr.get_radarr_queue(config.radarr_url, config.radarr_api_key)
     |> result.unwrap([])
 
-  // Fetch movie/series lists to check missing status
   let radarr_movies =
     arr.get_radarr_movies(config.radarr_url, config.radarr_api_key)
     |> result.unwrap([])
@@ -64,7 +62,6 @@ pub fn get_all_requests(config: Config) -> List(MediaRequest) {
 
   let torrents = list.append(torrents, sabnzbd_downloads)
 
-  // Combine all data
   jellyseerr_requests
   |> list.map(fn(req) {
     combine_request(
@@ -91,7 +88,6 @@ fn combine_request(
     _ -> TvShow
   }
 
-  // Get media info
   let #(title, poster_url, year, tmdb_id, tvdb_id) = case js_req.media {
     Some(media) -> {
       let title = option.or(media.title, media.name) |> option.unwrap("Unknown")
@@ -105,20 +101,17 @@ fn combine_request(
     None -> #("Unknown", None, None, None, None)
   }
 
-  // Find matching queue item(s) from Sonarr/Radarr by external ID
   let queue_item = case media_type {
     Movie -> find_queue_item(radarr_queue, tmdb_id, fn(i) { i.tmdb_id })
     TvShow -> find_queue_item(sonarr_queue, tvdb_id, fn(i) { i.tvdb_id })
   }
 
-  // For TV shows, find ALL matching queue items for per-episode tracking
   let requested_seasons = js_req.requested_seasons
   let episode_downloads = case media_type {
     TvShow -> {
       let all_items =
         find_all_queue_items(sonarr_queue, tvdb_id, fn(i) { i.tvdb_id })
       all_items
-      // Filter to only episodes from requested seasons (if seasons specified)
       |> list.filter(fn(qi) {
         case requested_seasons {
           [] -> True
@@ -140,7 +133,6 @@ fn combine_request(
     Movie -> []
   }
 
-  // Find matching torrent from qBittorrent
   let torrent = case queue_item {
     Some(qi) ->
       case qi.download_id {
@@ -152,15 +144,11 @@ fn combine_request(
 
   let request_status = request.jellyseerr_status_to_request_status(js_req.status)
 
-  // Determine if request is missing based on Radarr/Sonarr status
-  // Missing: monitored, no file, IS available (released) - should be downloadable
-  // Not available: monitored, no file, NOT available (not released yet)
   let #(is_missing, is_not_available) = case media_type {
     Movie -> get_movie_status(radarr_movies, tmdb_id)
     TvShow -> #(is_series_missing(sonarr_series, tvdb_id), False)
   }
 
-  // Build the combined request
   MediaRequest(
     id: js_req.id,
     media_type: media_type,
@@ -295,7 +283,6 @@ fn find_torrent_by_name(
   torrents
   |> list.find(fn(t) {
     let torrent_words = extract_words(t.name)
-    // Check if all title words are present in torrent name
     list.all(title_words, fn(word) {
       list.contains(torrent_words, word)
     })
@@ -303,10 +290,6 @@ fn find_torrent_by_name(
   |> option.from_result
 }
 
-/// Extract words from a string for matching:
-/// - Convert to lowercase
-/// - Replace dots, underscores, hyphens with spaces
-/// - Split into words and filter out empty/short ones
 fn extract_words(s: String) -> List(String) {
   s
   |> string.lowercase
@@ -333,23 +316,17 @@ fn extract_year(date: Option(String)) -> Option(Int) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Overview endpoint processing
-// ---------------------------------------------------------------------------
-
 /// Build the processed overview response with downloading and missing categories.
 /// TV shows with multiple Jellyseerr requests are merged into single entries.
 pub fn get_overview(config: Config) -> OverviewResponse {
   let requests = get_all_requests(config)
 
-  // Separate into downloading and missing
   let downloading = list.filter(requests, is_actively_downloading)
   let missing =
     list.filter(requests, fn(r) {
       { r.is_missing || r.is_not_available } && !is_actively_downloading(r)
     })
 
-  // Merge same-series TV shows and convert to ProcessedRequest
   let processed_downloading = merge_and_process(downloading, True)
   let processed_missing = merge_and_process(missing, False)
 
@@ -389,7 +366,6 @@ fn merge_and_process(
   requests: List(MediaRequest),
   is_downloading: Bool,
 ) -> List(ProcessedRequest) {
-  // Separate movies and TV shows
   let movies =
     list.filter(requests, fn(r) {
       case r.media_type {
@@ -405,10 +381,8 @@ fn merge_and_process(
       }
     })
 
-  // Convert movies directly
   let processed_movies = list.map(movies, fn(r) { movie_to_processed(r) })
 
-  // Group TV shows by series identity and merge
   let tv_groups = group_tv_by_series(tv_shows)
   let processed_tv =
     dict.values(tv_groups)
@@ -467,24 +441,19 @@ fn merge_tv_group(
   group: List(MediaRequest),
   is_downloading: Bool,
 ) -> ProcessedRequest {
-  // Use first request as base for metadata
   let assert [base, ..] = group
 
-  // Collect all episode downloads, de-duplicate by season+episode
   let all_episodes =
     list.flat_map(group, fn(r) { r.episode_downloads })
     |> dedup_episodes
 
-  // Filter out completed/seeding if this is a downloading group
   let active_episodes = case is_downloading {
     True -> list.filter(all_episodes, is_episode_active)
     False -> all_episodes
   }
 
-  // Group by season and build SeasonProgress entries
   let seasons = build_season_groups(active_episodes)
 
-  // Compute effective status across all active episodes
   let effective_status = case is_downloading {
     True -> best_episode_status(active_episodes)
     False -> None
@@ -535,7 +504,6 @@ fn is_episode_active(ep: EpisodeDownload) -> Bool {
 
 /// Group episodes by season number and compute aggregates
 fn build_season_groups(episodes: List(EpisodeDownload)) -> List(SeasonProgress) {
-  // Group by season number
   let grouped =
     list.fold(episodes, dict.new(), fn(acc, ep) {
       let existing = dict.get(acc, ep.season_number) |> result.unwrap([])
@@ -547,7 +515,6 @@ fn build_season_groups(episodes: List(EpisodeDownload)) -> List(SeasonProgress) 
     let #(season_num, eps) = pair
     let ep_count = list.length(eps)
 
-    // Compute aggregates
     let total_progress =
       list.fold(eps, 0.0, fn(sum, ep) {
         sum +. option.unwrap(ep.download_progress, 0.0)
@@ -561,7 +528,6 @@ fn build_season_groups(episodes: List(EpisodeDownload)) -> List(SeasonProgress) 
     let max_eta =
       list.fold(eps, 0, fn(mx, ep) { int.max(mx, option.unwrap(ep.eta_seconds, 0)) })
 
-    // Convert episodes to EpisodeProgress
     let episode_details =
       eps
       |> list.sort(fn(a, b) { int.compare(a.episode_number, b.episode_number) })

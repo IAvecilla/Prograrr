@@ -23,7 +23,6 @@ pub type Context {
   Context(config: Config, static_dir: String)
 }
 
-/// Main router handler
 pub fn handle_request(req: Request, ctx: Context) -> Response {
   use req <- cors.wisp_middleware(
     req,
@@ -35,16 +34,11 @@ pub fn handle_request(req: Request, ctx: Context) -> Response {
   )
 
   case wisp.path_segments(req) {
-    // API routes (protected when PROGRARR_API_KEY is set)
     ["api", "requests"] -> with_auth(req, ctx, handle_requests)
     ["api", "overview"] -> with_auth(req, ctx, handle_overview)
     ["api", "health"] -> handle_health(req)
     ["api", "debug"] -> with_auth(req, ctx, handle_debug)
-
-    // Static files
     ["static", ..rest] -> serve_static(rest, ctx.static_dir)
-
-    // Serve index.html for SPA routes (catch-all for SPA routing)
     _ -> serve_index(ctx.static_dir)
   }
 }
@@ -55,7 +49,6 @@ fn with_auth(
   handler: fn(Request, Context) -> Response,
 ) -> Response {
   case ctx.config.api_key {
-    // No API key configured — allow all requests
     "" -> handler(req, ctx)
     key -> {
       let provided = http_request.get_header(req, "x-api-key")
@@ -78,7 +71,6 @@ fn handle_requests(req: Request, ctx: Context) -> Response {
     Get -> {
       let requests = aggregator.get_all_requests(ctx.config)
 
-      // Filter by tmdbId query param if provided
       let filtered = case wisp.get_query(req) |> list.find(fn(pair) { pair.0 == "tmdbId" }) {
         Ok(#(_, value)) -> {
           case int.parse(value) {
@@ -263,7 +255,6 @@ fn debug_qbit_error(e: qbittorrent.QBitError) -> String {
 }
 
 fn serve_static(path_segments: List(String), static_dir: String) -> Response {
-  // Strip query params from path (e.g., styles.css?v=2 -> styles.css)
   let clean_segments =
     path_segments
     |> list.map(fn(s) {
