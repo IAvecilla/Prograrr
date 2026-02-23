@@ -314,7 +314,3 @@ gleam run
 # Build Docker image
 docker build -t prograrr .
 ```
-
-## License
-
-MIT
