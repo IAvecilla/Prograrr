@@ -7,6 +7,7 @@ pub type Config {
   Config(
     port: Int,
     api_key: String,
+    cors_origin: String,
     jellyseerr_url: String,
     jellyseerr_api_key: String,
     sonarr_url: String,
@@ -24,7 +25,8 @@ pub type Config {
 /// Load configuration from environment variables
 pub fn load() -> Result(Config, String) {
   use port <- result.try(get_env_int("PORT", 3000))
-  use api_key <- result.try(get_env("PROGRARR_API_KEY", ""))
+  use api_key <- result.try(get_env_required("PROGRARR_API_KEY"))
+  use cors_origin <- result.try(get_env("CORS_ORIGIN", ""))
   use jellyseerr_url <- result.try(get_env("JELLYSEERR_URL", "http://localhost:5055"))
   use jellyseerr_api_key <- result.try(get_env_required("JELLYSEERR_API_KEY"))
   use sonarr_url <- result.try(get_env("SONARR_URL", "http://localhost:8989"))
@@ -32,14 +34,15 @@ pub fn load() -> Result(Config, String) {
   use radarr_url <- result.try(get_env("RADARR_URL", "http://localhost:7878"))
   use radarr_api_key <- result.try(get_env_required("RADARR_API_KEY"))
   use qbittorrent_url <- result.try(get_env("QBITTORRENT_URL", "http://localhost:8080"))
-  use qbittorrent_username <- result.try(get_env("QBITTORRENT_USERNAME", "admin"))
-  use qbittorrent_password <- result.try(get_env("QBITTORRENT_PASSWORD", "adminadmin"))
+  use qbittorrent_username <- result.try(get_env_required("QBITTORRENT_USERNAME"))
+  use qbittorrent_password <- result.try(get_env_required("QBITTORRENT_PASSWORD"))
   use sabnzbd_url <- result.try(get_env("SABNZBD_URL", "http://localhost:8080"))
   use sabnzbd_api_key <- result.try(get_env("SABNZBD_API_KEY", ""))
 
   Ok(Config(
     port: port,
     api_key: api_key,
+    cors_origin: cors_origin,
     jellyseerr_url: jellyseerr_url,
     jellyseerr_api_key: jellyseerr_api_key,
     sonarr_url: sonarr_url,
@@ -60,6 +63,7 @@ fn get_env(key: String, default: String) -> Result(String, String) {
 
 fn get_env_required(key: String) -> Result(String, String) {
   case envoy.get(key) {
+    Ok("") -> Error("Environment variable " <> key <> " cannot be empty")
     Ok(value) -> Ok(value)
     Error(_) -> Error("Missing required environment variable: " <> key)
   }

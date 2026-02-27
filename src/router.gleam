@@ -6,6 +6,9 @@ import api/qbittorrent
 import api/sabnzbd
 import config.{type Config}
 import cors_builder as cors
+import gleam/bit_array
+import gleam/crypto
+import gleam/erlang/process
 import gleam/http.{Get, Options}
 import gleam/http/request as http_request
 import gleam/int
@@ -24,14 +27,21 @@ pub type Context {
 }
 
 pub fn handle_request(req: Request, ctx: Context) -> Response {
-  use req <- cors.wisp_middleware(
-    req,
-    cors.new()
+  let cors_config = case ctx.config.cors_origin {
+    "" ->
+      cors.new()
       |> cors.allow_origin("*")
-      |> cors.allow_method(Get)
-      |> cors.allow_header("Content-Type")
-      |> cors.allow_header("X-Api-Key"),
-  )
+    origin ->
+      cors.new()
+      |> cors.allow_origin(origin)
+  }
+  let cors_config =
+    cors_config
+    |> cors.allow_method(Get)
+    |> cors.allow_header("Content-Type")
+    |> cors.allow_header("X-Api-Key")
+
+  use req <- cors.wisp_middleware(req, cors_config)
 
   case wisp.path_segments(req) {
     ["api", "requests"] -> with_auth(req, ctx, handle_requests)
@@ -48,22 +58,31 @@ fn with_auth(
   ctx: Context,
   handler: fn(Request, Context) -> Response,
 ) -> Response {
-  case ctx.config.api_key {
-    "" -> handler(req, ctx)
-    key -> {
-      let provided = http_request.get_header(req, "x-api-key")
-      case provided {
-        Ok(value) if value == key -> handler(req, ctx)
-        _ -> {
-          let body =
-            json.object([#("error", json.string("Unauthorized"))])
-            |> json.to_string_tree
-            |> string_tree.to_string
-          wisp.json_response(body, 401)
-        }
+  let provided = http_request.get_header(req, "x-api-key")
+  case provided {
+    Ok(value) if value != "" -> {
+      let matches =
+        crypto.secure_compare(
+          bit_array.from_string(value),
+          bit_array.from_string(ctx.config.api_key),
+        )
+      case matches {
+        True -> handler(req, ctx)
+        False -> reject_auth()
       }
     }
+    _ -> reject_auth()
   }
+}
+
+fn reject_auth() -> Response {
+  // Delay failed auth responses to slow down brute force attempts
+  process.sleep(1000)
+  let body =
+    json.object([#("error", json.string("Unauthorized"))])
+    |> json.to_string_tree
+    |> string_tree.to_string
+  wisp.json_response(body, 401)
 }
 
 fn handle_requests(req: Request, ctx: Context) -> Response {

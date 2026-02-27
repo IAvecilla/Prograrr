@@ -5,6 +5,7 @@ services:
     environment:
       - TZ=${TIMEZONE}
       - PORT=3000
+      - PROGRARR_API_KEY=${PROGRARR_API_KEY}
       - JELLYSEERR_URL=http://jellyseerr:5055
       - JELLYSEERR_API_KEY=${JELLYSEERR_API_KEY}
       - SONARR_URL=http://gluetun:8989
@@ -14,6 +15,8 @@ services:
       - QBITTORRENT_URL=http://gluetun:8701
       - QBITTORRENT_USERNAME=${QBITTORRENT_USERNAME}
       - QBITTORRENT_PASSWORD=${QBITTORRENT_PASSWORD}
+      - SABNZBD_URL=${SABNZBD_URL}
+      - SABNZBD_API_KEY=${SABNZBD_API_KEY}
     ports:
       - "3000:3000"
     restart: unless-stopped

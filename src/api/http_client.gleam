@@ -34,13 +34,13 @@ pub fn get(url: String, headers: List(#(String, String))) -> Result(String, Http
         Ok(resp) -> {
           case resp.status {
             200 -> Ok(resp.body)
-            status -> Error(RequestFailed("HTTP " <> int.to_string(status) <> " from " <> url))
+            status -> Error(RequestFailed("HTTP " <> int.to_string(status) <> " from " <> sanitize_url(url)))
           }
         }
-        Error(_) -> Error(RequestFailed("HTTP request failed to " <> url))
+        Error(_) -> Error(RequestFailed("HTTP request failed to " <> sanitize_url(url)))
       }
     }
-    Error(_) -> Error(InvalidResponse("Invalid URL: " <> url))
+    Error(_) -> Error(InvalidResponse("Invalid URL: " <> sanitize_url(url)))
   }
 }
 
@@ -68,13 +68,21 @@ pub fn post_with_cookie(url: String, body: String, headers: List(#(String, Strin
               let cookie = extract_cookie(resp)
               Ok(HttpResponse(body: resp.body, cookie: cookie))
             }
-            False -> Error(RequestFailed("HTTP " <> int.to_string(resp.status) <> " from " <> url))
+            False -> Error(RequestFailed("HTTP " <> int.to_string(resp.status) <> " from " <> sanitize_url(url)))
           }
         }
-        Error(_) -> Error(RequestFailed("HTTP request failed to " <> url))
+        Error(_) -> Error(RequestFailed("HTTP request failed to " <> sanitize_url(url)))
       }
     }
-    Error(_) -> Error(InvalidResponse("Invalid URL: " <> url))
+    Error(_) -> Error(InvalidResponse("Invalid URL: " <> sanitize_url(url)))
+  }
+}
+
+/// Strip query parameters from URLs to avoid leaking secrets (e.g. SABnzbd API key)
+fn sanitize_url(url: String) -> String {
+  case string.split_once(url, "?") {
+    Ok(#(base, _)) -> base
+    Error(_) -> url
   }
 }
 
