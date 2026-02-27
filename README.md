@@ -42,6 +42,7 @@ Jellyseerr, Sonarr/Radarr, and at least one download client (qBittorrent or SABn
 docker run -d \
   --name prograrr \
   -p 3000:3000 \
+  -e PROGRARR_API_KEY=your_prograrr_api_key \
   -e JELLYSEERR_URL=http://jellyseerr:5055 \
   -e JELLYSEERR_API_KEY=your_jellyseerr_api_key \
   -e SONARR_URL=http://sonarr:8989 \
@@ -49,8 +50,8 @@ docker run -d \
   -e RADARR_URL=http://radarr:7878 \
   -e RADARR_API_KEY=your_radarr_api_key \
   -e QBITTORRENT_URL=http://qbittorrent:8080 \
-  -e QBITTORRENT_USERNAME=admin \
-  -e QBITTORRENT_PASSWORD=adminadmin \
+  -e QBITTORRENT_USERNAME=your_username \
+  -e QBITTORRENT_PASSWORD=your_password \
   -e SABNZBD_URL=http://sabnzbd:8080 \
   -e SABNZBD_API_KEY=your_sabnzbd_api_key \
   ignacioavecilla/prograrr:latest
@@ -70,6 +71,7 @@ services:
     environment:
       - TZ=America/New_York
       - PORT=3000
+      - PROGRARR_API_KEY=${PROGRARR_API_KEY}
       - JELLYSEERR_URL=http://jellyseerr:5055
       - JELLYSEERR_API_KEY=${JELLYSEERR_API_KEY}
       - SONARR_URL=http://sonarr:8989
@@ -95,6 +97,7 @@ If your *arr apps run through a VPN container like Gluetun, point the URLs to th
     image: ignacioavecilla/prograrr:latest
     container_name: prograrr
     environment:
+      - PROGRARR_API_KEY=${PROGRARR_API_KEY}
       - JELLYSEERR_URL=http://jellyseerr:5055
       - JELLYSEERR_API_KEY=${JELLYSEERR_API_KEY}
       - SONARR_URL=http://gluetun:8989
@@ -119,19 +122,20 @@ networks:
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
+| `PROGRARR_API_KEY` | **Yes** | - | API key to protect all routes (all API requests require `X-Api-Key` header) |
+| `JELLYSEERR_API_KEY` | **Yes** | - | Jellyseerr API key |
+| `SONARR_API_KEY` | **Yes** | - | Sonarr API key |
+| `RADARR_API_KEY` | **Yes** | - | Radarr API key |
+| `QBITTORRENT_USERNAME` | **Yes** | - | qBittorrent username |
+| `QBITTORRENT_PASSWORD` | **Yes** | - | qBittorrent password |
 | `PORT` | No | `3000` | Port the web server listens on |
-| `PROGRARR_API_KEY` | No | - | When set, all API routes require `X-Api-Key` header |
 | `JELLYSEERR_URL` | No | `http://localhost:5055` | Jellyseerr instance URL |
-| `JELLYSEERR_API_KEY` | Yes | - | Jellyseerr API key |
 | `SONARR_URL` | No | `http://localhost:8989` | Sonarr instance URL |
-| `SONARR_API_KEY` | Yes | - | Sonarr API key |
 | `RADARR_URL` | No | `http://localhost:7878` | Radarr instance URL |
-| `RADARR_API_KEY` | Yes | - | Radarr API key |
 | `QBITTORRENT_URL` | No | `http://localhost:8080` | qBittorrent Web UI URL |
-| `QBITTORRENT_USERNAME` | No | `admin` | qBittorrent username |
-| `QBITTORRENT_PASSWORD` | No | `adminadmin` | qBittorrent password |
 | `SABNZBD_URL` | No | `http://localhost:8080` | SABnzbd URL |
 | `SABNZBD_API_KEY` | No | - | SABnzbd API key (leave empty to disable) |
+| `CORS_ORIGIN` | No | `*` (all origins) | Restrict CORS to a specific origin (e.g. `http://localhost:3000`) |
 | `TZ` | No | `UTC` | Timezone |
 
 ## Getting API Keys
@@ -160,7 +164,7 @@ networks:
 
 ## API Endpoints
 
-When `PROGRARR_API_KEY` is set, protected endpoints require the `X-Api-Key` header. The `/api/health` endpoint is always public.
+All API endpoints except `/api/health` require the `X-Api-Key` header matching your `PROGRARR_API_KEY`.
 
 | Endpoint | Description |
 |----------|-------------|
@@ -249,6 +253,18 @@ Response shape:
 }
 ```
 
+## Security
+
+Prograrr is designed to never expose your credentials:
+
+- **No credentials in API responses** — API keys and passwords are only used server-side to connect to your services. They are never included in any JSON response.
+- **Mandatory authentication** — All API data endpoints require a valid `X-Api-Key` header. The app will not start without `PROGRARR_API_KEY` set.
+- **Constant-time key comparison** — API key validation uses `gleam/crypto.secure_compare` to prevent timing-based attacks.
+- **Brute force protection** — Failed authentication attempts are delayed by 1 second to limit brute force to ~1 attempt/second.
+- **No secrets in error messages** — Error messages strip query parameters from URLs to prevent leaking credentials (e.g. SABnzbd API keys passed via URL).
+- **No default credentials** — All sensitive values (`PROGRARR_API_KEY`, `QBITTORRENT_USERNAME`, `QBITTORRENT_PASSWORD`, and all API keys) must be explicitly configured. Empty values are rejected.
+- **Configurable CORS** — Set `CORS_ORIGIN` to restrict which origins can call the API. Defaults to `*` (all origins).
+
 ## Development
 
 Built with [Gleam](https://gleam.run/) using:
@@ -278,9 +294,12 @@ direnv allow
 gleam deps download
 
 # Run locally (set environment variables first)
+export PROGRARR_API_KEY=your_key
 export JELLYSEERR_API_KEY=your_key
 export SONARR_API_KEY=your_key
 export RADARR_API_KEY=your_key
+export QBITTORRENT_USERNAME=your_username
+export QBITTORRENT_PASSWORD=your_password
 gleam run
 
 # Build Docker image
