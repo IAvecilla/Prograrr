@@ -48,7 +48,7 @@ pub fn main() -> Nil {
       io.println("  SONARR_URL         - Sonarr URL (default: http://localhost:8989)")
       io.println("  RADARR_URL         - Radarr URL (default: http://localhost:7878)")
       io.println("  QBITTORRENT_URL    - qBittorrent URL (default: http://localhost:8080)")
-      io.println("  CORS_ORIGIN        - Allowed CORS origin (default: * allows all)")
+      io.println("  CORS_ORIGIN        - Allowed CORS origin (default: no cross-origin access)")
     }
   }
 }

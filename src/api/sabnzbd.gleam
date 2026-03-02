@@ -112,11 +112,13 @@ fn parse_timeleft(timeleft: String) -> Int {
 /// so they work with the shared torrent_state_to_download_status converter
 fn normalize_state(status: String) -> String {
   case status {
-    "Downloading" -> "downloading"
-    "Queued" -> "queuedDL"
+    "Downloading" | "Fetching" -> "downloading"
+    "Queued" | "Propagating" -> "queuedDL"
     "Paused" -> "pausedDL"
-    "Verifying" | "Extracting" | "Repairing" -> "downloading"
+    "Verifying" | "Extracting" | "Repairing" | "QuickCheck" | "Moving" ->
+      "downloading"
     "Completed" -> "checkingUP"
+    "Failed" -> "stalledDL"
     _ -> status
   }
 }

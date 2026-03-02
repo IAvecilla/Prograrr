@@ -1,5 +1,5 @@
 import gleam/json.{type Json}
-import gleam/option.{type Option}
+import gleam/option.{type Option, Some}
 
 /// Media type enumeration
 pub type MediaType {
@@ -93,6 +93,8 @@ pub type JellyseerrMedia {
     id: Int,
     tmdb_id: Option(Int),
     tvdb_id: Option(Int),
+    /// Media availability status from Jellyseerr (3=Processing, 4=Partially Available, 5=Available)
+    media_status: Option(Int),
     title: Option(String),
     name: Option(String),
     poster_path: Option(String),
@@ -233,18 +235,26 @@ fn option_to_json(opt: Option(a), encoder: fn(a) -> Json) -> Json {
 
 // Conversion helpers
 
-/// Convert Jellyseerr status code to RequestStatus.
-/// Note: Jellyseerr uses different status codes for requests vs media:
-/// - Request status: 1=Pending, 2=Approved, 3=Declined
-/// - Media status: 3=Processing, 4=Partially Available, 5=Available
-/// We treat status 3 as Processing since declined requests are typically filtered out.
-pub fn jellyseerr_status_to_request_status(status: Int) -> RequestStatus {
-  case status {
-    1 -> Pending
-    2 -> Approved
-    3 -> Processing
-    4 | 5 -> Available
-    _ -> Unknown
+/// Convert Jellyseerr request + media status to RequestStatus.
+/// Request status: 1=Pending, 2=Approved, 3=Declined
+/// Media status: 3=Processing, 4=Partially Available, 5=Available
+/// Media status takes priority when it indicates availability.
+pub fn jellyseerr_status_to_request_status(
+  request_status: Int,
+  media_status: Option(Int),
+) -> RequestStatus {
+  case media_status {
+    Some(4) | Some(5) -> Available
+    Some(3) -> Processing
+    _ ->
+      case request_status {
+        1 -> Pending
+        2 -> Approved
+        // Seerr sometimes returns media status values (4=Partially Available, 5=Available)
+        // in the request status field
+        4 | 5 -> Available
+        _ -> Unknown
+      }
   }
 }
 
@@ -255,8 +265,8 @@ pub fn torrent_state_to_download_status(state: String) -> DownloadStatus {
     "downloading" | "forcedDL" -> Downloading
     "metaDL" | "allocating" | "queuedDL" | "checkingDL" -> Queued
     "stalledDL" -> Stalled
-    "pausedDL" -> Paused
-    "uploading" | "stalledUP" | "pausedUP" | "queuedUP" | "forcedUP" -> Seeding
+    "pausedDL" | "stoppedDL" -> Paused
+    "uploading" | "stalledUP" | "pausedUP" | "stoppedUP" | "queuedUP" | "forcedUP" -> Seeding
     "checkingUP" -> Completed
     _ -> NotFound
   }

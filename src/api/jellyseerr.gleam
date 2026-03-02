@@ -55,7 +55,11 @@ fn enrich_request(req: JellyseerrRequest, base_url: String, api_key: String) -> 
             Ok(details) ->
               JellyseerrRequest(
                 ..req,
-                media: Some(JellyseerrMedia(..details, tvdb_id: media.tvdb_id)),
+                media: Some(JellyseerrMedia(
+                  ..details,
+                  tvdb_id: media.tvdb_id,
+                  media_status: media.media_status,
+                )),
               )
             Error(_) -> req
           }
@@ -101,6 +105,7 @@ fn media_details_decoder(tmdb_id: Int) -> decode.Decoder(JellyseerrMedia) {
     id: tmdb_id,
     tmdb_id: Some(tmdb_id),
     tvdb_id: None,
+    media_status: None,
     title: title,
     name: name,
     poster_path: poster_path,
@@ -169,11 +174,13 @@ fn basic_media_decoder() -> decode.Decoder(JellyseerrMedia) {
   use id <- decode.field("id", decode.int)
   use tmdb_id <- decode.optional_field("tmdbId", None, decode.optional(decode.int))
   use tvdb_id <- decode.optional_field("tvdbId", None, decode.optional(decode.int))
+  use media_status <- decode.optional_field("status", None, decode.optional(decode.int))
 
   decode.success(JellyseerrMedia(
     id: id,
     tmdb_id: tmdb_id,
     tvdb_id: tvdb_id,
+    media_status: media_status,
     title: None,
     name: None,
     poster_path: None,

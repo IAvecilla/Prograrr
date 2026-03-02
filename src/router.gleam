@@ -28,9 +28,7 @@ pub type Context {
 
 pub fn handle_request(req: Request, ctx: Context) -> Response {
   let cors_config = case ctx.config.cors_origin {
-    "" ->
-      cors.new()
-      |> cors.allow_origin("*")
+    "" -> cors.new()
     origin ->
       cors.new()
       |> cors.allow_origin(origin)
@@ -229,7 +227,7 @@ fn handle_debug(_req: Request, ctx: Context) -> Response {
 
 fn debug_jellyseerr_error(e: jellyseerr.JellyseerrError) -> String {
   case e {
-    jellyseerr.HttpError(_) -> "HTTP error"
+    jellyseerr.HttpError(http_err) -> "HTTP error: " <> http_client.error_message(http_err)
     jellyseerr.ParseError(msg) -> "Parse error: " <> msg
   }
 }
@@ -249,6 +247,16 @@ fn format_arr_status(
       json.object([
         #("status", json.string("ok")),
         #("count", json.int(list.length(items))),
+        #("items", json.array(items, fn(item: request.ArrQueueItem) {
+          json.object([
+            #("title", json.string(item.title)),
+            #("status", json.string(item.status)),
+            #("downloadId", case item.download_id {
+              option.Some(id) -> json.string(id)
+              option.None -> json.null()
+            }),
+          ])
+        })),
       ])
     Error(e) ->
       json.object([
@@ -282,17 +290,28 @@ fn serve_static(path_segments: List(String), static_dir: String) -> Response {
         _ -> s
       }
     })
-  let path = static_dir <> "/" <> string.join(clean_segments, "/")
 
-  case simplifile.read(path) {
-    Ok(content) -> {
-      let content_type = guess_content_type(path)
-      wisp.response(200)
-      |> wisp.set_header("Content-Type", content_type)
-      |> wisp.set_header("Cache-Control", "public, max-age=3600")
-      |> wisp.set_body(wisp.Text(content))
+  // Reject path traversal attempts
+  let has_traversal =
+    list.any(clean_segments, fn(s) {
+      s == ".." || string.contains(s, "../") || string.contains(s, "/..")
+    })
+
+  case has_traversal {
+    True -> wisp.response(400)
+    False -> {
+      let path = static_dir <> "/" <> string.join(clean_segments, "/")
+      case simplifile.read(path) {
+        Ok(content) -> {
+          let content_type = guess_content_type(path)
+          wisp.response(200)
+          |> wisp.set_header("Content-Type", content_type)
+          |> wisp.set_header("Cache-Control", "public, max-age=3600")
+          |> wisp.set_body(wisp.Text(content))
+        }
+        Error(_) -> wisp.not_found()
+      }
     }
-    Error(_) -> wisp.not_found()
   }
 }
 
@@ -303,6 +322,7 @@ fn serve_index(static_dir: String) -> Response {
     Ok(content) -> {
       wisp.response(200)
       |> wisp.set_header("Content-Type", "text/html")
+      |> wisp.set_header("Cache-Control", "no-store")
       |> wisp.set_body(wisp.Text(content))
     }
     Error(_) -> wisp.not_found()

@@ -4,6 +4,7 @@ import api/qbittorrent
 import api/sabnzbd
 import config.{type Config}
 import gleam/dict
+import gleam/erlang/process
 import gleam/float
 import gleam/int
 import gleam/list
@@ -24,41 +25,82 @@ import models/request.{
 
 /// Fetch and aggregate all data from configured services
 pub fn get_all_requests(config: Config) -> List(MediaRequest) {
-  let jellyseerr_requests =
+  let timeout = 15_000
+
+  // Create subjects for receiving results from concurrent API calls
+  let jellyseerr_sub = process.new_subject()
+  let sonarr_queue_sub = process.new_subject()
+  let radarr_queue_sub = process.new_subject()
+  let radarr_movies_sub = process.new_subject()
+  let sonarr_series_sub = process.new_subject()
+  let qbit_sub = process.new_subject()
+  let sabnzbd_sub = process.new_subject()
+
+  // Spawn all API calls concurrently (unlinked so one crash doesn't kill the rest)
+  process.spawn_unlinked(fn() {
     jellyseerr.get_requests(config.jellyseerr_url, config.jellyseerr_api_key)
     |> result.unwrap([])
+    |> process.send(jellyseerr_sub, _)
+  })
 
-  let sonarr_queue =
+  process.spawn_unlinked(fn() {
     arr.get_sonarr_queue(config.sonarr_url, config.sonarr_api_key)
     |> result.unwrap([])
+    |> process.send(sonarr_queue_sub, _)
+  })
 
-  let radarr_queue =
+  process.spawn_unlinked(fn() {
     arr.get_radarr_queue(config.radarr_url, config.radarr_api_key)
     |> result.unwrap([])
+    |> process.send(radarr_queue_sub, _)
+  })
 
-  let radarr_movies =
+  process.spawn_unlinked(fn() {
     arr.get_radarr_movies(config.radarr_url, config.radarr_api_key)
     |> result.unwrap([])
+    |> process.send(radarr_movies_sub, _)
+  })
 
-  let sonarr_series =
+  process.spawn_unlinked(fn() {
     arr.get_sonarr_series(config.sonarr_url, config.sonarr_api_key)
     |> result.unwrap([])
+    |> process.send(sonarr_series_sub, _)
+  })
 
-  let torrents =
+  process.spawn_unlinked(fn() {
     qbittorrent.get_torrents_with_auth(
       config.qbittorrent_url,
       config.qbittorrent_username,
       config.qbittorrent_password,
     )
     |> result.unwrap([])
+    |> process.send(qbit_sub, _)
+  })
 
-  // Fetch SABnzbd downloads if configured
-  let sabnzbd_downloads = case config.sabnzbd_api_key {
-    "" -> []
-    api_key ->
-      sabnzbd.get_downloads(config.sabnzbd_url, api_key)
-      |> result.unwrap([])
-  }
+  process.spawn_unlinked(fn() {
+    let downloads = case config.sabnzbd_api_key {
+      "" -> []
+      api_key ->
+        sabnzbd.get_downloads(config.sabnzbd_url, api_key)
+        |> result.unwrap([])
+    }
+    process.send(sabnzbd_sub, downloads)
+  })
+
+  // Collect results (total wait = max call time, not sum)
+  let jellyseerr_requests =
+    process.receive(jellyseerr_sub, timeout) |> result.unwrap([])
+  let sonarr_queue =
+    process.receive(sonarr_queue_sub, timeout) |> result.unwrap([])
+  let radarr_queue =
+    process.receive(radarr_queue_sub, timeout) |> result.unwrap([])
+  let radarr_movies =
+    process.receive(radarr_movies_sub, timeout) |> result.unwrap([])
+  let sonarr_series =
+    process.receive(sonarr_series_sub, timeout) |> result.unwrap([])
+  let torrents = process.receive(qbit_sub, timeout) |> result.unwrap([])
+  let sabnzbd_downloads =
+    process.receive(sabnzbd_sub, timeout) |> result.unwrap([])
 
   let torrents = list.append(torrents, sabnzbd_downloads)
 
@@ -142,7 +184,12 @@ fn combine_request(
     None -> find_torrent_by_name(torrents, title)
   }
 
-  let request_status = request.jellyseerr_status_to_request_status(js_req.status)
+  let media_status = case js_req.media {
+    Some(media) -> media.media_status
+    None -> None
+  }
+  let request_status =
+    request.jellyseerr_status_to_request_status(js_req.status, media_status)
 
   let #(is_missing, is_not_available) = case media_type {
     Movie -> get_movie_status(radarr_movies, tmdb_id)

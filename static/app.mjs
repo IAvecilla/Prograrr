@@ -8,18 +8,54 @@ let state = {
   requests: [],
   loading: true,
   error: null,
-  activeTab: 'downloading'
+  activeTab: 'downloading',
+  authenticated: false,
 };
 
-// API
+// API key management via sessionStorage
+function getApiKey() {
+  return sessionStorage.getItem('prograrr_api_key') || '';
+}
+
+function setApiKey(key) {
+  sessionStorage.setItem('prograrr_api_key', key);
+}
+
+function clearApiKey() {
+  sessionStorage.removeItem('prograrr_api_key');
+}
+
+function getApiHeaders() {
+  return { 'X-Api-Key': getApiKey() };
+}
+
+// HTML escaping to prevent XSS when inserting dynamic content into innerHTML
+function esc(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 async function fetchRequests() {
   try {
-    const response = await fetch('/api/requests');
+    const response = await fetch('/api/requests', { headers: getApiHeaders() });
+    if (response.status === 401) {
+      state.authenticated = false;
+      clearApiKey();
+      state.loading = false;
+      render();
+      return;
+    }
     if (!response.ok) throw new Error('Failed to fetch');
     const data = await response.json();
     state.requests = data;
     state.loading = false;
     state.error = null;
+    state.authenticated = true;
   } catch (err) {
     state.error = 'Failed to fetch requests';
     state.loading = false;
@@ -28,6 +64,12 @@ async function fetchRequests() {
 }
 
 // Helpers
+const VALID_STATUSES = new Set(['downloading', 'seeding', 'paused', 'queued', 'stalled', 'completed']);
+
+function safeStatus(status) {
+  return VALID_STATUSES.has(status) ? status : 'unknown';
+}
+
 function formatStatus(status) {
   const statusMap = {
     downloading: 'Downloading',
@@ -37,7 +79,7 @@ function formatStatus(status) {
     stalled: 'Stalled',
     completed: 'Completed'
   };
-  return statusMap[status] || status;
+  return statusMap[status] || 'Unknown';
 }
 
 function formatSpeed(bytesPerSec) {
@@ -192,6 +234,30 @@ function setActiveTab(tab) {
 // Render
 function render() {
   const app = document.getElementById('app');
+
+  if (!state.authenticated && !getApiKey()) {
+    app.innerHTML = renderLogin();
+    const form = document.getElementById('login-form');
+    if (form) {
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const input = document.getElementById('api-key-input');
+        const key = input.value.trim();
+        if (key) {
+          setApiKey(key);
+          state.loading = true;
+          state.error = null;
+          render();
+          await fetchRequests();
+          if (state.authenticated) {
+            setInterval(fetchRequests, 15000);
+          }
+        }
+      });
+    }
+    return;
+  }
+
   const filteredRequests = mergeSeriesRequests(filterRequests(state.requests, state.activeTab));
 
   app.innerHTML = `
@@ -226,6 +292,30 @@ function render() {
   });
 }
 
+function renderLogin() {
+  return `
+    <div class="app">
+      ${renderHeader()}
+      <main class="main">
+        <div class="login-container">
+          <form id="login-form" class="login-form">
+            <label for="api-key-input" class="login-label">API Key</label>
+            <input
+              type="password"
+              id="api-key-input"
+              class="login-input"
+              placeholder="Enter your Prograrr API key"
+              autocomplete="off"
+              required
+            />
+            <button type="submit" class="login-button">Connect</button>
+          </form>
+        </div>
+      </main>
+    </div>
+  `;
+}
+
 function renderHeader() {
   return `
     <header class="header">
@@ -249,7 +339,7 @@ function renderLoading() {
 function renderError() {
   return `
     <div class="error">
-      <p>${state.error}</p>
+      <p>${esc(state.error)}</p>
     </div>
   `;
 }
@@ -307,17 +397,17 @@ function renderRequestCard(request) {
 
 function renderPoster(request) {
   const content = request.posterUrl
-    ? `<img src="${request.posterUrl}" alt="${request.title}" class="poster-img">`
+    ? `<img src="${esc(request.posterUrl)}" alt="${esc(request.title)}" class="poster-img">`
     : `<div class="poster-placeholder">${mediaTypeIcon(request.mediaType)}</div>`;
 
   return `<div class="poster">${content}</div>`;
 }
 
 function renderTitle(request) {
-  const year = request.year ? `<span class="year">(${request.year})</span>` : '';
+  const year = request.year ? `<span class="year">(${esc(request.year)})</span>` : '';
   return `
     <div class="title-section">
-      <h2 class="title">${request.title}</h2>
+      <h2 class="title">${esc(request.title)}</h2>
       ${year}
     </div>
   `;
@@ -329,7 +419,7 @@ function renderBadges(request) {
   // Actively downloading takes priority
   if (isActivelyDownloading(request)) {
     const status = bestDownloadStatus(request);
-    badges.push(`<span class="badge badge-download badge-${status}">${formatStatus(status)}</span>`);
+    badges.push(`<span class="badge badge-download badge-${safeStatus(status)}">${formatStatus(status)}</span>`);
   } else if (request.isMissing) {
     // Missing (file was deleted)
     badges.push(`<span class="badge badge-missing">Missing</span>`);
@@ -338,15 +428,15 @@ function renderBadges(request) {
     badges.push(`<span class="badge badge-not-available">Not Available</span>`);
   } else if (request.downloadStatus) {
     // Completed/seeding
-    badges.push(`<span class="badge badge-download badge-${request.downloadStatus}">${formatStatus(request.downloadStatus)}</span>`);
+    badges.push(`<span class="badge badge-download badge-${safeStatus(request.downloadStatus)}">${formatStatus(request.downloadStatus)}</span>`);
   }
 
   if (request.quality) {
-    badges.push(`<span class="badge badge-quality">${formatQuality(request.quality)}</span>`);
+    badges.push(`<span class="badge badge-quality">${esc(formatQuality(request.quality))}</span>`);
   }
 
   if (request.requestedBy) {
-    badges.push(`<span class="badge badge-user">${request.requestedBy}</span>`);
+    badges.push(`<span class="badge badge-user">${esc(request.requestedBy)}</span>`);
   }
 
   return `<div class="badges">${badges.join('')}</div>`;
@@ -443,7 +533,7 @@ function renderEpisodeProgress(ep) {
   const progress = ep.downloadProgress != null ? ep.downloadProgress.toFixed(1) : '0.0';
   const label = ep.episodeNumber === 0
     ? 'Season Pack'
-    : `E${String(ep.episodeNumber).padStart(2, '0')}${ep.episodeTitle ? ' - ' + ep.episodeTitle : ''}`;
+    : `E${String(ep.episodeNumber).padStart(2, '0')}${ep.episodeTitle ? ' - ' + esc(ep.episodeTitle) : ''}`;
 
   const speed = ep.downloadSpeed ? `<span class="download-speed">${formatSpeed(ep.downloadSpeed)}</span>` : '';
   const eta = ep.etaSeconds && ep.etaSeconds > 0 && ep.etaSeconds < 8640000
@@ -469,10 +559,17 @@ function renderEpisodeProgress(ep) {
 
 // Init
 function init() {
-  render();
-  fetchRequests();
-  // Poll every 15 seconds to reduce API load
-  setInterval(fetchRequests, 15000);
+  if (getApiKey()) {
+    state.authenticated = true;
+    render();
+    fetchRequests();
+    setInterval(fetchRequests, 15000);
+  } else {
+    state.loading = false;
+    render();
+  }
 }
+
+
 
 document.addEventListener('DOMContentLoaded', init);

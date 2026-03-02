@@ -3,6 +3,7 @@ import gleam/dynamic/decode
 import gleam/int
 import gleam/json
 import gleam/option.{None, Some}
+import gleam/uri
 import models/request.{type TorrentInfo, TorrentInfo}
 
 pub type QBitError {
@@ -18,7 +19,8 @@ pub fn get_torrents_with_auth(
   password: String,
 ) -> Result(List(TorrentInfo), QBitError) {
   let auth_url = base_url <> "/api/v2/auth/login"
-  let auth_body = "username=" <> username <> "&password=" <> password
+  let auth_body =
+    "username=" <> uri.percent_encode(username) <> "&password=" <> uri.percent_encode(password)
   let auth_headers = [
     #("Content-Type", "application/x-www-form-urlencoded"),
   ]
