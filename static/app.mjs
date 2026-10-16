@@ -11,11 +11,13 @@ let state = {
   activeTab: 'downloading',
   authenticated: false,
   authRequired: true,
+  loginMethod: 'apiKey',
+  loginUsername: '',
   loginError: null,
 };
 
-// Auth uses an HttpOnly session cookie set by /api/login, so the key is never
-// stored where page scripts can read it.
+// Auth uses an HttpOnly session cookie set by /api/login, so the password or
+// key is never stored where page scripts can read it.
 let pollTimer = null;
 
 function startPolling() {
@@ -29,13 +31,16 @@ function stopPolling() {
   pollTimer = null;
 }
 
-async function login(apiKey) {
+// Returns null on success, or an error message to show
+async function login(body) {
   const response = await fetch('/api/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ apiKey }),
+    body: JSON.stringify(body),
   });
-  return response.ok;
+  if (response.ok) return null;
+  if (response.status === 429) return 'Too many failed attempts, try again in 15 minutes';
+  return state.loginMethod === 'password' ? 'Invalid username or password' : 'Invalid API key';
 }
 
 async function logout() {
@@ -258,10 +263,19 @@ function render() {
     if (form) {
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const input = document.getElementById('api-key-input');
-        const key = input.value.trim();
-        if (!key) return;
-        if (await login(key)) {
+        let body;
+        if (state.loginMethod === 'password') {
+          state.loginUsername = document.getElementById('username-input').value.trim();
+          const password = document.getElementById('password-input').value;
+          if (!state.loginUsername || !password) return;
+          body = { username: state.loginUsername, password };
+        } else {
+          const apiKey = document.getElementById('api-key-input').value.trim();
+          if (!apiKey) return;
+          body = { apiKey };
+        }
+        const error = await login(body);
+        if (error === null) {
           state.authenticated = true;
           state.loginError = null;
           state.loading = true;
@@ -269,7 +283,7 @@ function render() {
           render();
           startPolling();
         } else {
-          state.loginError = 'Invalid API key';
+          state.loginError = error;
           render();
         }
       });
@@ -321,21 +335,50 @@ function renderLogin() {
       <main class="main">
         <div class="login-container">
           <form id="login-form" class="login-form">
-            <label for="api-key-input" class="login-label">API Key</label>
-            <input
-              type="password"
-              id="api-key-input"
-              class="login-input"
-              placeholder="Enter your Prograrr API key"
-              autocomplete="current-password"
-              required
-            />
+            ${state.loginMethod === 'password' ? renderPasswordFields() : renderApiKeyField()}
             ${state.loginError ? `<p class="login-error">${esc(state.loginError)}</p>` : ''}
             <button type="submit" class="login-button">Connect</button>
           </form>
         </div>
       </main>
     </div>
+  `;
+}
+
+function renderPasswordFields() {
+  return `
+    <label for="username-input" class="login-label">Username</label>
+    <input
+      type="text"
+      id="username-input"
+      class="login-input"
+      value="${esc(state.loginUsername)}"
+      autocomplete="username"
+      autocapitalize="none"
+      required
+    />
+    <label for="password-input" class="login-label">Password</label>
+    <input
+      type="password"
+      id="password-input"
+      class="login-input"
+      autocomplete="current-password"
+      required
+    />
+  `;
+}
+
+function renderApiKeyField() {
+  return `
+    <label for="api-key-input" class="login-label">API Key</label>
+    <input
+      type="password"
+      id="api-key-input"
+      class="login-input"
+      placeholder="Enter your Prograrr API key"
+      autocomplete="current-password"
+      required
+    />
   `;
 }
 
@@ -587,6 +630,7 @@ async function init() {
     const response = await fetch('/api/session');
     const session = await response.json();
     state.authRequired = session.authRequired;
+    state.loginMethod = session.loginMethod;
     state.authenticated = session.authenticated;
   } catch (err) {
     state.error = 'Failed to reach Prograrr';

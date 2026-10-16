@@ -12,6 +12,11 @@ pub type QBittorrent {
   QBittorrent(url: String, username: String, password: String)
 }
 
+/// Username and password for the browser login
+pub type Credentials {
+  Credentials(username: String, password: String)
+}
+
 /// Application configuration loaded from environment variables.
 /// Download clients are optional: each one is enabled when its URL is set.
 pub type Config {
@@ -19,6 +24,8 @@ pub type Config {
     port: Int,
     /// `None` when auth is disabled with PROGRARR_AUTH=false
     api_key: Option(String),
+    /// `None` means the browser logs in with the API key instead
+    login: Option(Credentials),
     cors_origin: Option(String),
     jellyseerr: Service,
     sonarr: Service,
@@ -31,6 +38,10 @@ pub type Config {
 pub fn load() -> Result(Config, String) {
   use port <- result.try(port())
   use api_key <- result.try(api_key())
+  use login <- result.try(case api_key {
+    Some(_) -> credentials()
+    None -> Ok(None)
+  })
   use jellyseerr <- result.try(service("JELLYSEERR"))
   use sonarr <- result.try(service("SONARR"))
   use radarr <- result.try(service("RADARR"))
@@ -50,11 +61,14 @@ pub fn load() -> Result(Config, String) {
 
   case qbittorrent, sabnzbd {
     None, None ->
-      Error("At least one download client must be configured: set QBITTORRENT_URL or SABNZBD_URL")
+      Error(
+        "At least one download client must be configured: set QBITTORRENT_URL or SABNZBD_URL",
+      )
     _, _ ->
       Ok(Config(
         port:,
         api_key:,
+        login:,
         cors_origin: optional("CORS_ORIGIN"),
         jellyseerr:,
         sonarr:,
@@ -70,7 +84,20 @@ fn api_key() -> Result(Option(String), String) {
     Some("false") -> Ok(None)
     None | Some("true") -> required("PROGRARR_API_KEY") |> result.map(Some)
     Some(value) ->
-      Error("Invalid value for PROGRARR_AUTH (expected true or false): " <> value)
+      Error(
+        "Invalid value for PROGRARR_AUTH (expected true or false): " <> value,
+      )
+  }
+}
+
+/// Optional browser login, both variables must be set together
+fn credentials() -> Result(Option(Credentials), String) {
+  case optional("PROGRARR_USERNAME"), optional("PROGRARR_PASSWORD") {
+    Some(username), Some(password) ->
+      Ok(Some(Credentials(username:, password:)))
+    None, None -> Ok(None)
+    _, _ ->
+      Error("PROGRARR_USERNAME and PROGRARR_PASSWORD must be set together")
   }
 }
 

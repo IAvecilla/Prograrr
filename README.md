@@ -77,7 +77,8 @@ Unset and empty values are treated the same. Service URLs have no defaults.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `PROGRARR_API_KEY` | **Yes**, unless auth is off | Used to log in from the browser, and as the `X-Api-Key` header for API clients |
+| `PROGRARR_API_KEY` | **Yes**, unless auth is off | The `X-Api-Key` header for API clients. Also the browser login when no username/password is set |
+| `PROGRARR_USERNAME`, `PROGRARR_PASSWORD` | No | Browser login. Set both, or neither to log in with the API key |
 | `PROGRARR_AUTH` | No | Set to `false` to disable auth entirely (default `true`). Only do this on a network you trust |
 | `JELLYSEERR_URL`, `JELLYSEERR_API_KEY` | **Yes** | Jellyseerr / Overseerr |
 | `SONARR_URL`, `SONARR_API_KEY` | **Yes** | Sonarr |
@@ -108,11 +109,13 @@ prograrr.yourdomain.com {
 }
 ```
 
-Keep auth enabled (the default) and use a long random `PROGRARR_API_KEY`, for example from `openssl rand -hex 32`.
+Keep auth enabled (the default), use a long random `PROGRARR_API_KEY` (for example from `openssl rand -hex 32`) and a strong password that you don't use anywhere else.
 
 ### Logging in
 
-The web UI asks for `PROGRARR_API_KEY` once. The server then sets a signed session cookie that lasts 30 days. The cookie is `HttpOnly` (page scripts can't read it) and `SameSite=Strict`, and it's marked `Secure` whenever the request came over HTTPS, directly or through a proxy that sends `X-Forwarded-Proto`. Changing `PROGRARR_API_KEY` logs out every browser.
+The web UI asks for `PROGRARR_USERNAME` and `PROGRARR_PASSWORD`, or for `PROGRARR_API_KEY` when those aren't set. The server then sets a signed session cookie that lasts 30 days. The cookie is `HttpOnly` (page scripts can't read it) and `SameSite=Strict`, and it's marked `Secure` whenever the request came over HTTPS, directly or through a proxy that sends `X-Forwarded-Proto`. Changing the API key, username or password logs out every browser.
+
+After 5 login attempts from the same IP within 15 minutes, further attempts are rejected until the 15 minutes are up. Behind a reverse proxy every request comes from the proxy's IP, so a lockout applies to everyone at once.
 
 On iOS or Android you can use "Add to Home Screen" to open Prograrr like an app.
 
@@ -149,8 +152,8 @@ All data endpoints require either the `X-Api-Key` header matching your `PROGRARR
 | `GET /api/requests` | Returns aggregated media requests with download status. Supports `?tmdbId=` filter |
 | `GET /api/overview` | Returns processed, ready-to-render data split into downloading and missing categories |
 | `GET /api/health` | Health check endpoint |
-| `GET /api/session` | `{authRequired, authenticated}` for the current request (no auth needed) |
-| `POST /api/login` | Body `{"apiKey": "..."}`. Sets the session cookie on success, `401` otherwise |
+| `GET /api/session` | `{authRequired, authenticated, loginMethod}` for the current request, where `loginMethod` is `"password"` or `"apiKey"` (no auth needed) |
+| `POST /api/login` | Body `{"username": "...", "password": "..."}`, or `{"apiKey": "..."}` when no username/password is set. Sets the session cookie on success, `401` on wrong credentials, `429` when locked out |
 | `POST /api/logout` | Clears the session cookie |
 | `GET /api/debug` | Connection status (ok + item count, error, or disabled) for each service |
 
@@ -240,9 +243,9 @@ Prograrr is designed to never expose your credentials:
 
 - **No credentials in API responses**: API keys and passwords are only used server-side to connect to your services. They are never included in any JSON response.
 - **Authentication on by default**: All API data endpoints require a valid `X-Api-Key` header or session cookie. The app will not start without `PROGRARR_API_KEY` unless you explicitly set `PROGRARR_AUTH=false`.
-- **Key never stored in the browser**: The web UI exchanges the key for a signed, `HttpOnly` session cookie that page scripts can't read. Sessions expire after 30 days and are invalidated when the key changes.
-- **Constant-time key comparison**: API key validation uses `gleam/crypto.secure_compare` to prevent timing-based attacks.
-- **Brute force protection**: Failed authentication attempts are delayed by 1 second to limit brute force to ~1 attempt/second.
+- **Credentials never stored in the browser**: The web UI exchanges the password or key for a signed, `HttpOnly` session cookie that page scripts can't read. The cookie only holds a signed timestamp. Sessions expire after 30 days and are invalidated when the key, username or password changes.
+- **Constant-time comparison**: The API key, username and password are hashed and compared with `gleam/crypto.secure_compare`, so response times don't reveal how much of a guess was right or how long the secret is. Username and password are always both checked, so a failed login doesn't reveal which one was wrong.
+- **Brute force protection**: Each IP gets 5 login attempts per 15 minutes, counted before the check so parallel requests can't get around it. Failed attempts are also delayed by 1 second.
 - **No secrets in error messages**: Error messages strip query parameters from URLs to prevent leaking credentials (e.g. SABnzbd API keys passed via URL).
 - **No default credentials**: All sensitive values (`PROGRARR_API_KEY`, qBittorrent credentials, and all API keys) must be explicitly configured. Empty values are rejected.
 - **Configurable CORS**: Cross-origin requests are blocked unless `CORS_ORIGIN` is set to an allowed origin.

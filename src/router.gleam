@@ -9,16 +9,18 @@ import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option
+import login_limiter.{type Limiter}
 import models/overview
 import models/request
 import simplifile
 import wisp.{type Request, type Response}
 
 pub type Context {
-  Context(config: Config, static_dir: String)
+  Context(config: Config, static_dir: String, limiter: Limiter)
 }
 
-pub fn handle_request(req: Request, ctx: Context) -> Response {
+/// `client_ip` is the socket peer address, used to rate limit logins
+pub fn handle_request(req: Request, ctx: Context, client_ip: String) -> Response {
   let cors_config = case ctx.config.cors_origin {
     option.None -> cors.new()
     option.Some(origin) ->
@@ -39,7 +41,7 @@ pub fn handle_request(req: Request, ctx: Context) -> Response {
     ["api", "overview"] -> with_auth(req, ctx, handle_overview)
     ["api", "health"] -> handle_health(req)
     ["api", "session"] -> handle_session(req, ctx)
-    ["api", "login"] -> handle_login(req, ctx)
+    ["api", "login"] -> handle_login(req, ctx, client_ip)
     ["api", "logout"] -> handle_logout(req)
     ["api", "debug"] -> with_auth(req, ctx, handle_debug)
     _ -> serve_index(ctx.static_dir)
@@ -51,32 +53,67 @@ fn with_auth(
   ctx: Context,
   handler: fn(Request, Context) -> Response,
 ) -> Response {
-  case session.is_authorized(req, ctx.config.api_key) {
+  case session.is_authorized(req, ctx.config) {
     True -> handler(req, ctx)
     False -> session.unauthorized()
   }
 }
 
-/// Lets the frontend decide whether to show the login form
+/// Lets the frontend decide whether to show the login form, and which one
 fn handle_session(req: Request, ctx: Context) -> Response {
+  let login_method = case ctx.config.login {
+    option.Some(_) -> "password"
+    option.None -> "apiKey"
+  }
   json.object([
     #("authRequired", json.bool(option.is_some(ctx.config.api_key))),
-    #("authenticated", json.bool(session.is_authorized(req, ctx.config.api_key))),
+    #("authenticated", json.bool(session.is_authorized(req, ctx.config))),
+    #("loginMethod", json.string(login_method)),
   ])
   |> json.to_string
   |> wisp.json_response(200)
 }
 
-fn handle_login(req: Request, ctx: Context) -> Response {
+fn handle_login(req: Request, ctx: Context, client_ip: String) -> Response {
   use <- wisp.require_method(req, Post)
   use body <- wisp.require_json(req)
-  let decoder = {
-    use key <- decode.field("apiKey", decode.string)
-    decode.success(key)
+  let #(decoder, expected) = case ctx.config.login {
+    option.Some(_) -> #(
+      {
+        use username <- decode.field("username", decode.string)
+        use password <- decode.field("password", decode.string)
+        decode.success(session.PasswordLogin(username:, password:))
+      },
+      "Expected {\"username\": string, \"password\": string}",
+    )
+    option.None -> #(
+      {
+        use api_key <- decode.field("apiKey", decode.string)
+        decode.success(session.ApiKeyLogin(api_key:))
+      },
+      "Expected {\"apiKey\": string}",
+    )
   }
-  case decode.run(body, decoder) {
-    Ok(key) -> session.login(req, ctx.config.api_key, key)
-    Error(_) -> wisp.bad_request("Expected {\"apiKey\": string}")
+  case ctx.config.api_key, decode.run(body, decoder) {
+    option.None, _ -> wisp.no_content()
+    _, Error(_) -> wisp.bad_request(expected)
+    _, Ok(form) ->
+      case login_limiter.attempt(ctx.limiter, client_ip) {
+        False ->
+          json.object([
+            #("error", json.string("Too many failed attempts, try again later")),
+          ])
+          |> json.to_string
+          |> wisp.json_response(429)
+        True ->
+          case session.check_login(ctx.config, form) {
+            True -> {
+              login_limiter.reset(ctx.limiter, client_ip)
+              session.login(req)
+            }
+            False -> session.unauthorized()
+          }
+      }
   }
 }
 

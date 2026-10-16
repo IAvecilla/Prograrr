@@ -1,3 +1,4 @@
+import config.{type Config, type Credentials, Credentials}
 import gleam/bit_array
 import gleam/crypto
 import gleam/erlang/process
@@ -7,7 +8,7 @@ import gleam/http/request
 import gleam/http/response
 import gleam/int
 import gleam/json
-import gleam/option.{type Option, None, Some}
+import gleam/option.{None, Some}
 import gleam/result
 import wisp.{type Request, type Response}
 
@@ -15,42 +16,68 @@ const cookie_name = "prograrr_session"
 
 const session_seconds = 2_592_000
 
-/// Secret used by wisp to sign cookies. Derived from the API key so that
-/// rotating PROGRARR_API_KEY invalidates every existing browser session.
-pub fn secret_key_base(api_key: Option(String)) -> String {
-  case api_key {
-    Some(key) ->
-      crypto.hash(crypto.Sha512, <<"prograrr-session:", key:utf8>>)
+/// What the browser submits to log in
+pub type LoginForm {
+  ApiKeyLogin(api_key: String)
+  PasswordLogin(username: String, password: String)
+}
+
+/// Secret used by wisp to sign cookies. Derived from the API key and login
+/// credentials so that changing any of them invalidates every browser session.
+pub fn secret_key_base(cfg: Config) -> String {
+  case cfg.api_key {
+    Some(key) -> {
+      let login = case cfg.login {
+        Some(Credentials(username:, password:)) -> [username, password]
+        None -> []
+      }
+      crypto.hash(
+        crypto.Sha512,
+        bit_array.from_string("prograrr-session")
+          |> append_fields([key, ..login]),
+      )
       |> bit_array.base16_encode
+    }
     None -> wisp.random_string(64)
+  }
+}
+
+/// Join values with NUL separators so different splits can't hash the same
+fn append_fields(acc: BitArray, values: List(String)) -> BitArray {
+  case values {
+    [] -> acc
+    [value, ..rest] -> append_fields(<<acc:bits, 0, value:utf8>>, rest)
   }
 }
 
 /// A request is authorized by a valid X-Api-Key header (API clients) or a
 /// valid session cookie (browsers). Always true when auth is disabled.
-pub fn is_authorized(req: Request, api_key: Option(String)) -> Bool {
-  case api_key {
+pub fn is_authorized(req: Request, cfg: Config) -> Bool {
+  case cfg.api_key {
     None -> True
     Some(key) ->
       case request.get_header(req, "x-api-key") {
-        Ok(provided) -> key_matches(provided, key)
+        Ok(provided) -> secret_matches(provided, key)
         Error(_) -> has_valid_session(req)
       }
   }
 }
 
-/// Check the submitted key and start a browser session
-pub fn login(req: Request, api_key: Option(String), submitted: String) -> Response {
-  case api_key {
-    None -> wisp.no_content()
-    Some(key) ->
-      case key_matches(submitted, key) {
-        True ->
-          wisp.no_content()
-          |> set_session_cookie(req, int.to_string(now()), session_seconds)
-        False -> unauthorized()
-      }
+/// Check the submitted login against the config. When a username and password
+/// are configured the browser must use them, otherwise it uses the API key.
+pub fn check_login(cfg: Config, form: LoginForm) -> Bool {
+  case cfg.api_key, cfg.login, form {
+    Some(_), Some(expected), PasswordLogin(username:, password:) ->
+      credentials_match(expected, username, password)
+    Some(key), None, ApiKeyLogin(api_key:) -> secret_matches(api_key, key)
+    _, _, _ -> False
   }
+}
+
+/// Start a browser session
+pub fn login(req: Request) -> Response {
+  wisp.no_content()
+  |> set_session_cookie(req, int.to_string(now()), session_seconds)
 }
 
 pub fn logout(req: Request) -> Response {
@@ -66,11 +93,25 @@ pub fn unauthorized() -> Response {
   |> wisp.json_response(401)
 }
 
-fn key_matches(provided: String, key: String) -> Bool {
+/// Both fields are always compared, so a wrong username takes as long as a
+/// wrong password and doesn't reveal which one was wrong
+fn credentials_match(
+  expected: Credentials,
+  username: String,
+  password: String,
+) -> Bool {
+  let username_ok = secret_matches(username, expected.username)
+  let password_ok = secret_matches(password, expected.password)
+  username_ok && password_ok
+}
+
+/// Constant-time comparison. Both sides are hashed first so the comparison
+/// doesn't leak the length of the secret either.
+fn secret_matches(provided: String, secret: String) -> Bool {
   provided != ""
   && crypto.secure_compare(
-    bit_array.from_string(provided),
-    bit_array.from_string(key),
+    crypto.hash(crypto.Sha256, <<provided:utf8>>),
+    crypto.hash(crypto.Sha256, <<secret:utf8>>),
   )
 }
 
