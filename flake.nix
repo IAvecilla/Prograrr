@@ -32,7 +32,7 @@
             echo "  gleam run      - Run the server"
             echo "  gleam test     - Run tests"
             echo ""
-            echo "Required env vars: JELLYSEERR_API_KEY, SONARR_API_KEY, RADARR_API_KEY"
+            echo "Configure via .env (see .env.example)"
           '';
         };
       });

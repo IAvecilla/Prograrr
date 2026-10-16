@@ -109,8 +109,6 @@ pub type ArrQueueItem {
     id: Int,
     title: String,
     status: String,
-    size: Int,
-    sizeleft: Int,
     tmdb_id: Option(Int),
     tvdb_id: Option(Int),
     download_id: Option(String),
@@ -124,7 +122,6 @@ pub type ArrQueueItem {
 /// Movie from Radarr with monitored/missing status
 pub type RadarrMovie {
   RadarrMovie(
-    id: Int,
     tmdb_id: Option(Int),
     monitored: Bool,
     has_file: Bool,
@@ -135,7 +132,6 @@ pub type RadarrMovie {
 /// Series from Sonarr with monitored/missing status
 pub type SonarrSeries {
   SonarrSeries(
-    id: Int,
     tvdb_id: Option(Int),
     monitored: Bool,
     episode_count: Int,
@@ -143,15 +139,18 @@ pub type SonarrSeries {
   )
 }
 
-/// Torrent info from qBittorrent
-pub type TorrentInfo {
-  TorrentInfo(
-    hash: String,
+/// An active download from qBittorrent or SABnzbd.
+/// `id` is the torrent hash or SABnzbd nzo_id, matched against *arr's downloadId.
+pub type Download {
+  Download(
+    id: String,
     name: String,
+    /// 0.0 to 1.0
     progress: Float,
-    dlspeed: Int,
-    eta: Int,
-    state: String,
+    /// Bytes per second
+    speed: Int,
+    eta_seconds: Int,
+    status: DownloadStatus,
   )
 }
 
@@ -162,18 +161,18 @@ pub fn media_request_to_json(request: MediaRequest) -> Json {
     #("id", json.int(request.id)),
     #("mediaType", media_type_to_json(request.media_type)),
     #("title", json.string(request.title)),
-    #("posterUrl", option_to_json(request.poster_url, json.string)),
-    #("year", option_to_json(request.year, json.int)),
+    #("posterUrl", json.nullable(request.poster_url, json.string)),
+    #("year", json.nullable(request.year, json.int)),
     #("requestStatus", request_status_to_json(request.request_status)),
-    #("requestedBy", option_to_json(request.requested_by, json.string)),
-    #("requestedAt", option_to_json(request.requested_at, json.string)),
-    #("downloadStatus", option_to_json(request.download_status, download_status_to_json)),
-    #("downloadProgress", option_to_json(request.download_progress, json.float)),
-    #("downloadSpeed", option_to_json(request.download_speed, json.int)),
-    #("etaSeconds", option_to_json(request.eta_seconds, json.int)),
-    #("queuePosition", option_to_json(request.queue_position, json.int)),
-    #("queueStatus", option_to_json(request.queue_status, json.string)),
-    #("quality", option_to_json(request.quality, json.string)),
+    #("requestedBy", json.nullable(request.requested_by, json.string)),
+    #("requestedAt", json.nullable(request.requested_at, json.string)),
+    #("downloadStatus", json.nullable(request.download_status, download_status_to_json)),
+    #("downloadProgress", json.nullable(request.download_progress, json.float)),
+    #("downloadSpeed", json.nullable(request.download_speed, json.int)),
+    #("etaSeconds", json.nullable(request.eta_seconds, json.int)),
+    #("queuePosition", json.nullable(request.queue_position, json.int)),
+    #("queueStatus", json.nullable(request.queue_status, json.string)),
+    #("quality", json.nullable(request.quality, json.string)),
     #("isMissing", json.bool(request.is_missing)),
     #("isNotAvailable", json.bool(request.is_not_available)),
     #("episodeDownloads", json.array(request.episode_downloads, episode_download_to_json)),
@@ -188,12 +187,12 @@ fn episode_download_to_json(ep: EpisodeDownload) -> Json {
   json.object([
     #("seasonNumber", json.int(ep.season_number)),
     #("episodeNumber", json.int(ep.episode_number)),
-    #("episodeTitle", option_to_json(ep.episode_title, json.string)),
-    #("downloadStatus", option_to_json(ep.download_status, download_status_to_json)),
-    #("downloadProgress", option_to_json(ep.download_progress, json.float)),
-    #("downloadSpeed", option_to_json(ep.download_speed, json.int)),
-    #("etaSeconds", option_to_json(ep.eta_seconds, json.int)),
-    #("quality", option_to_json(ep.quality, json.string)),
+    #("episodeTitle", json.nullable(ep.episode_title, json.string)),
+    #("downloadStatus", json.nullable(ep.download_status, download_status_to_json)),
+    #("downloadProgress", json.nullable(ep.download_progress, json.float)),
+    #("downloadSpeed", json.nullable(ep.download_speed, json.int)),
+    #("etaSeconds", json.nullable(ep.eta_seconds, json.int)),
+    #("quality", json.nullable(ep.quality, json.string)),
   ])
 }
 
@@ -215,21 +214,18 @@ fn request_status_to_json(status: RequestStatus) -> Json {
 }
 
 fn download_status_to_json(status: DownloadStatus) -> Json {
-  case status {
-    Downloading -> json.string("downloading")
-    Seeding -> json.string("seeding")
-    Paused -> json.string("paused")
-    Queued -> json.string("queued")
-    Stalled -> json.string("stalled")
-    Completed -> json.string("completed")
-    NotFound -> json.string("not_found")
-  }
+  json.string(download_status_to_string(status))
 }
 
-fn option_to_json(opt: Option(a), encoder: fn(a) -> Json) -> Json {
-  case opt {
-    option.Some(value) -> encoder(value)
-    option.None -> json.null()
+pub fn download_status_to_string(status: DownloadStatus) -> String {
+  case status {
+    Downloading -> "downloading"
+    Seeding -> "seeding"
+    Paused -> "paused"
+    Queued -> "queued"
+    Stalled -> "stalled"
+    Completed -> "completed"
+    NotFound -> "not_found"
   }
 }
 

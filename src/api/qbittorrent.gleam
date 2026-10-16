@@ -1,63 +1,38 @@
-import api/http_client
+import api/http_client.{type ServiceError, AuthError}
+import config.{type QBittorrent}
 import gleam/dynamic/decode
 import gleam/int
-import gleam/json
 import gleam/option.{None, Some}
+import gleam/result
 import gleam/uri
-import models/request.{type TorrentInfo, TorrentInfo}
+import models/request.{type Download, Download}
 
-pub type QBitError {
-  HttpError(http_client.HttpError)
-  ParseError(String)
-  AuthError(String)
-}
-
-/// Get torrents with authentication (handles session cookie)
-pub fn get_torrents_with_auth(
-  base_url: String,
-  username: String,
-  password: String,
-) -> Result(List(TorrentInfo), QBitError) {
-  let auth_url = base_url <> "/api/v2/auth/login"
+/// Log in and fetch all torrents (qBittorrent uses a session cookie)
+pub fn get_downloads(qbit: QBittorrent) -> Result(List(Download), ServiceError) {
   let auth_body =
-    "username=" <> uri.percent_encode(username) <> "&password=" <> uri.percent_encode(password)
-  let auth_headers = [
-    #("Content-Type", "application/x-www-form-urlencoded"),
-  ]
+    "username="
+    <> uri.percent_encode(qbit.username)
+    <> "&password="
+    <> uri.percent_encode(qbit.password)
+  use auth <- result.try(http_client.post_with_cookie(
+    qbit.url <> "/api/v2/auth/login",
+    auth_body,
+    [#("Content-Type", "application/x-www-form-urlencoded")],
+  ))
 
-  case http_client.post_with_cookie(auth_url, auth_body, auth_headers) {
-    Ok(auth_resp) -> {
-      case auth_resp.cookie {
-        Some(cookie) -> {
-          let url = base_url <> "/api/v2/torrents/info"
-          let headers = [#("Accept", "application/json")]
-
-          case http_client.get_with_cookie(url, headers, cookie) {
-            Ok(body) -> parse_torrents_response(body)
-            Error(err) -> Error(HttpError(err))
-          }
-        }
-        None -> {
-          Error(AuthError("No session cookie returned from qBittorrent"))
-        }
-      }
-    }
-    Error(err) -> Error(HttpError(err))
+  case auth.cookie {
+    Some(cookie) ->
+      http_client.get_json(
+        qbit.url <> "/api/v2/torrents/info",
+        [#("Cookie", cookie), #("Accept", "application/json")],
+        decode.list(torrent_decoder()),
+        "qBittorrent response",
+      )
+    None -> Error(AuthError("No session cookie returned from qBittorrent"))
   }
 }
 
-fn parse_torrents_response(
-  body: String,
-) -> Result(List(TorrentInfo), QBitError) {
-  let decoder = decode.list(torrent_decoder())
-
-  case json.parse(body, decoder) {
-    Ok(torrents) -> Ok(torrents)
-    Error(_) -> Error(ParseError("Failed to parse qBittorrent response"))
-  }
-}
-
-fn torrent_decoder() -> decode.Decoder(TorrentInfo) {
+fn torrent_decoder() -> decode.Decoder(Download) {
   use hash <- decode.field("hash", decode.string)
   use name <- decode.field("name", decode.string)
   use progress <- decode.field("progress", number_as_float())
@@ -65,13 +40,13 @@ fn torrent_decoder() -> decode.Decoder(TorrentInfo) {
   use eta <- decode.field("eta", decode.int)
   use state <- decode.field("state", decode.string)
 
-  decode.success(TorrentInfo(
-    hash: hash,
+  decode.success(Download(
+    id: hash,
     name: name,
     progress: progress,
-    dlspeed: dlspeed,
-    eta: eta,
-    state: state,
+    speed: dlspeed,
+    eta_seconds: eta,
+    status: request.torrent_state_to_download_status(state),
   ))
 }
 

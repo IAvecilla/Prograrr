@@ -1,15 +1,16 @@
 import api/arr
+import api/http_client.{type ServiceError, RequestFailed}
 import api/jellyseerr
 import api/qbittorrent
 import api/sabnzbd
 import config.{type Config}
 import gleam/dict
-import gleam/erlang/process
+import gleam/erlang/process.{type Subject}
 import gleam/float
 import gleam/int
 import gleam/list
-import gleam/order
 import gleam/option.{type Option, None, Some}
+import gleam/order
 import gleam/result
 import gleam/string
 import models/overview.{
@@ -17,104 +18,91 @@ import models/overview.{
   EpisodeProgress, OverviewResponse, ProcessedRequest, SeasonProgress,
 }
 import models/request.{
-  type ArrQueueItem, type DownloadStatus, type EpisodeDownload,
+  type ArrQueueItem, type Download, type DownloadStatus, type EpisodeDownload,
   type JellyseerrRequest, type MediaRequest, type RadarrMovie,
-  type SonarrSeries, type TorrentInfo, Completed, Downloading, EpisodeDownload,
-  MediaRequest, Movie, Paused, Queued, Seeding, Stalled, TvShow,
+  type SonarrSeries, Completed, Downloading, EpisodeDownload, MediaRequest,
+  Movie, Paused, Queued, Seeding, Stalled, TvShow,
 }
 
-/// Fetch and aggregate all data from configured services
+const timeout_ms = 15_000
+
+/// Raw results from every service. Download clients are `None` when disabled.
+pub type Sources {
+  Sources(
+    jellyseerr: Result(List(JellyseerrRequest), ServiceError),
+    sonarr_queue: Result(List(ArrQueueItem), ServiceError),
+    sonarr_series: Result(List(SonarrSeries), ServiceError),
+    radarr_queue: Result(List(ArrQueueItem), ServiceError),
+    radarr_movies: Result(List(RadarrMovie), ServiceError),
+    qbittorrent: Option(Result(List(Download), ServiceError)),
+    sabnzbd: Option(Result(List(Download), ServiceError)),
+  )
+}
+
+/// Query all configured services concurrently (total wait = slowest call)
+pub fn fetch_sources(config: Config) -> Sources {
+  let jellyseerr = async(fn() { jellyseerr.get_requests(config.jellyseerr) })
+  let sonarr_queue = async(fn() { arr.get_sonarr_queue(config.sonarr) })
+  let sonarr_series = async(fn() { arr.get_sonarr_series(config.sonarr) })
+  let radarr_queue = async(fn() { arr.get_radarr_queue(config.radarr) })
+  let radarr_movies = async(fn() { arr.get_radarr_movies(config.radarr) })
+  let qbit =
+    option.map(config.qbittorrent, fn(q) {
+      async(fn() { qbittorrent.get_downloads(q) })
+    })
+  let sab =
+    option.map(config.sabnzbd, fn(s) {
+      async(fn() { sabnzbd.get_downloads(s) })
+    })
+
+  Sources(
+    jellyseerr: await(jellyseerr),
+    sonarr_queue: await(sonarr_queue),
+    sonarr_series: await(sonarr_series),
+    radarr_queue: await(radarr_queue),
+    radarr_movies: await(radarr_movies),
+    qbittorrent: option.map(qbit, await),
+    sabnzbd: option.map(sab, await),
+  )
+}
+
+/// Run `work` in an unlinked process so one crash doesn't kill the rest
+fn async(work: fn() -> Result(a, ServiceError)) -> Subject(Result(a, ServiceError)) {
+  let subject = process.new_subject()
+  process.spawn_unlinked(fn() { process.send(subject, work()) })
+  subject
+}
+
+fn await(subject: Subject(Result(a, ServiceError))) -> Result(a, ServiceError) {
+  process.receive(subject, timeout_ms)
+  |> result.replace_error(RequestFailed("Timed out"))
+  |> result.flatten
+}
+
+/// Fetch and aggregate all data from configured services.
+/// Failing services are treated as empty so the rest still shows up.
 pub fn get_all_requests(config: Config) -> List(MediaRequest) {
-  let timeout = 15_000
+  let sources = fetch_sources(config)
+  let downloads =
+    [sources.qbittorrent, sources.sabnzbd]
+    |> list.flat_map(fn(client) {
+      client |> option.unwrap(Ok([])) |> result.unwrap([])
+    })
+  let sonarr_queue = result.unwrap(sources.sonarr_queue, [])
+  let radarr_queue = result.unwrap(sources.radarr_queue, [])
+  let radarr_movies = result.unwrap(sources.radarr_movies, [])
+  let sonarr_series = result.unwrap(sources.sonarr_series, [])
 
-  // Create subjects for receiving results from concurrent API calls
-  let jellyseerr_sub = process.new_subject()
-  let sonarr_queue_sub = process.new_subject()
-  let radarr_queue_sub = process.new_subject()
-  let radarr_movies_sub = process.new_subject()
-  let sonarr_series_sub = process.new_subject()
-  let qbit_sub = process.new_subject()
-  let sabnzbd_sub = process.new_subject()
-
-  // Spawn all API calls concurrently (unlinked so one crash doesn't kill the rest)
-  process.spawn_unlinked(fn() {
-    jellyseerr.get_requests(config.jellyseerr_url, config.jellyseerr_api_key)
-    |> result.unwrap([])
-    |> process.send(jellyseerr_sub, _)
-  })
-
-  process.spawn_unlinked(fn() {
-    arr.get_sonarr_queue(config.sonarr_url, config.sonarr_api_key)
-    |> result.unwrap([])
-    |> process.send(sonarr_queue_sub, _)
-  })
-
-  process.spawn_unlinked(fn() {
-    arr.get_radarr_queue(config.radarr_url, config.radarr_api_key)
-    |> result.unwrap([])
-    |> process.send(radarr_queue_sub, _)
-  })
-
-  process.spawn_unlinked(fn() {
-    arr.get_radarr_movies(config.radarr_url, config.radarr_api_key)
-    |> result.unwrap([])
-    |> process.send(radarr_movies_sub, _)
-  })
-
-  process.spawn_unlinked(fn() {
-    arr.get_sonarr_series(config.sonarr_url, config.sonarr_api_key)
-    |> result.unwrap([])
-    |> process.send(sonarr_series_sub, _)
-  })
-
-  process.spawn_unlinked(fn() {
-    qbittorrent.get_torrents_with_auth(
-      config.qbittorrent_url,
-      config.qbittorrent_username,
-      config.qbittorrent_password,
-    )
-    |> result.unwrap([])
-    |> process.send(qbit_sub, _)
-  })
-
-  process.spawn_unlinked(fn() {
-    let downloads = case config.sabnzbd_api_key {
-      "" -> []
-      api_key ->
-        sabnzbd.get_downloads(config.sabnzbd_url, api_key)
-        |> result.unwrap([])
-    }
-    process.send(sabnzbd_sub, downloads)
-  })
-
-  // Collect results (total wait = max call time, not sum)
-  let jellyseerr_requests =
-    process.receive(jellyseerr_sub, timeout) |> result.unwrap([])
-  let sonarr_queue =
-    process.receive(sonarr_queue_sub, timeout) |> result.unwrap([])
-  let radarr_queue =
-    process.receive(radarr_queue_sub, timeout) |> result.unwrap([])
-  let radarr_movies =
-    process.receive(radarr_movies_sub, timeout) |> result.unwrap([])
-  let sonarr_series =
-    process.receive(sonarr_series_sub, timeout) |> result.unwrap([])
-  let torrents = process.receive(qbit_sub, timeout) |> result.unwrap([])
-  let sabnzbd_downloads =
-    process.receive(sabnzbd_sub, timeout) |> result.unwrap([])
-
-  let torrents = list.append(torrents, sabnzbd_downloads)
-
-  jellyseerr_requests
-  |> list.map(fn(req) {
-    combine_request(
-      req,
-      sonarr_queue,
-      radarr_queue,
-      radarr_movies,
-      sonarr_series,
-      torrents,
-    )
-  })
+  sources.jellyseerr
+  |> result.unwrap([])
+  |> list.map(combine_request(
+    _,
+    sonarr_queue,
+    radarr_queue,
+    radarr_movies,
+    sonarr_series,
+    downloads,
+  ))
 }
 
 fn combine_request(
@@ -123,7 +111,7 @@ fn combine_request(
   radarr_queue: List(ArrQueueItem),
   radarr_movies: List(RadarrMovie),
   sonarr_series: List(SonarrSeries),
-  torrents: List(TorrentInfo),
+  downloads: List(Download),
 ) -> MediaRequest {
   let media_type = case js_req.media_type {
     "movie" -> Movie
@@ -164,7 +152,7 @@ fn combine_request(
             }
         }
       })
-      |> list.map(fn(qi) { build_episode_download(qi, torrents) })
+      |> list.map(fn(qi) { build_episode_download(qi, downloads) })
       |> list.sort(fn(a, b) {
         case int.compare(a.season_number, b.season_number) {
           order.Eq -> int.compare(a.episode_number, b.episode_number)
@@ -178,10 +166,10 @@ fn combine_request(
   let torrent = case queue_item {
     Some(qi) ->
       case qi.download_id {
-        Some(dl_id) -> find_torrent_by_hash(torrents, dl_id)
-        None -> find_torrent_by_name(torrents, title)
+        Some(dl_id) -> find_download_by_id(downloads, dl_id)
+        None -> find_download_by_name(downloads, title)
       }
-    None -> find_torrent_by_name(torrents, title)
+    None -> find_download_by_name(downloads, title)
   }
 
   let media_status = case js_req.media {
@@ -205,11 +193,10 @@ fn combine_request(
     request_status: request_status,
     requested_by: js_req.requested_by,
     requested_at: js_req.created_at,
-    download_status: torrent
-      |> option.map(fn(t) { request.torrent_state_to_download_status(t.state) }),
+    download_status: torrent |> option.map(fn(t) { t.status }),
     download_progress: torrent |> option.map(fn(t) { t.progress *. 100.0 }),
-    download_speed: torrent |> option.map(fn(t) { t.dlspeed }),
-    eta_seconds: torrent |> option.map(fn(t) { t.eta }),
+    download_speed: torrent |> option.map(fn(t) { t.speed }),
+    eta_seconds: torrent |> option.map(fn(t) { t.eta_seconds }),
     queue_position: queue_item |> option.map(fn(qi) { qi.id }),
     queue_status: queue_item |> option.map(fn(qi) { qi.status }),
     quality: queue_item |> option.then(fn(qi) { qi.quality }),
@@ -292,10 +279,10 @@ fn find_all_queue_items(
 /// Build an EpisodeDownload from a queue item by finding its torrent
 fn build_episode_download(
   qi: ArrQueueItem,
-  torrents: List(TorrentInfo),
+  downloads: List(Download),
 ) -> EpisodeDownload {
   let torrent = case qi.download_id {
-    Some(dl_id) -> find_torrent_by_hash(torrents, dl_id)
+    Some(dl_id) -> find_download_by_id(downloads, dl_id)
     None -> None
   }
 
@@ -303,31 +290,30 @@ fn build_episode_download(
     season_number: option.unwrap(qi.season_number, 0),
     episode_number: option.unwrap(qi.episode_number, 0),
     episode_title: qi.episode_title,
-    download_status: torrent
-      |> option.map(fn(t) { request.torrent_state_to_download_status(t.state) }),
+    download_status: torrent |> option.map(fn(t) { t.status }),
     download_progress: torrent |> option.map(fn(t) { t.progress *. 100.0 }),
-    download_speed: torrent |> option.map(fn(t) { t.dlspeed }),
-    eta_seconds: torrent |> option.map(fn(t) { t.eta }),
+    download_speed: torrent |> option.map(fn(t) { t.speed }),
+    eta_seconds: torrent |> option.map(fn(t) { t.eta_seconds }),
     quality: qi.quality,
   )
 }
 
-fn find_torrent_by_hash(
-  torrents: List(TorrentInfo),
-  hash: String,
-) -> Option(TorrentInfo) {
-  let lower_hash = string.lowercase(hash)
-  torrents
-  |> list.find(fn(t) { string.lowercase(t.hash) == lower_hash })
+fn find_download_by_id(
+  downloads: List(Download),
+  id: String,
+) -> Option(Download) {
+  let lower_id = string.lowercase(id)
+  downloads
+  |> list.find(fn(d) { string.lowercase(d.id) == lower_id })
   |> option.from_result
 }
 
-fn find_torrent_by_name(
-  torrents: List(TorrentInfo),
+fn find_download_by_name(
+  downloads: List(Download),
   title: String,
-) -> Option(TorrentInfo) {
+) -> Option(Download) {
   let title_words = extract_words(title)
-  torrents
+  downloads
   |> list.find(fn(t) {
     let torrent_words = extract_words(t.name)
     list.all(title_words, fn(word) {
@@ -443,7 +429,7 @@ fn movie_to_processed(r: MediaRequest) -> ProcessedRequest {
   let effective_status = case r.download_status {
     Some(status) ->
       case is_active_status(status) {
-        True -> Some(download_status_to_string(status))
+        True -> Some(request.download_status_to_string(status))
         False -> None
       }
     None -> None
@@ -585,7 +571,7 @@ fn build_season_groups(episodes: List(EpisodeDownload)) -> List(SeasonProgress) 
           progress: option.unwrap(ep.download_progress, 0.0),
           speed: option.unwrap(ep.download_speed, 0),
           eta: option.unwrap(ep.eta_seconds, 0),
-          status: option.map(ep.download_status, download_status_to_string),
+          status: option.map(ep.download_status, request.download_status_to_string),
           quality: ep.quality,
         )
       })
@@ -621,20 +607,8 @@ fn best_episode_status(episodes: List(EpisodeDownload)) -> Option(String) {
       }
     })
   case best_priority {
-    #(Some(status), pri) if pri > 0 -> Some(download_status_to_string(status))
+    #(Some(status), pri) if pri > 0 -> Some(request.download_status_to_string(status))
     _ -> Some("downloading")
-  }
-}
-
-fn download_status_to_string(status: DownloadStatus) -> String {
-  case status {
-    Downloading -> "downloading"
-    Seeding -> "seeding"
-    Paused -> "paused"
-    Queued -> "queued"
-    Stalled -> "stalled"
-    Completed -> "completed"
-    request.NotFound -> "not_found"
   }
 }
 

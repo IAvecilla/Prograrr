@@ -66,14 +66,14 @@ fn processed_request_to_json(req: ProcessedRequest) -> Json {
   json.object([
     #("title", json.string(req.title)),
     #("mediaType", json.string(req.media_type)),
-    #("posterUrl", option_to_json(req.poster_url, json.string)),
-    #("year", option_to_json(req.year, json.int)),
-    #("requestedBy", option_to_json(req.requested_by, json.string)),
-    #("effectiveStatus", option_to_json(req.effective_status, json.string)),
-    #("progress", option_to_json(req.progress, json.float)),
-    #("speed", option_to_json(req.speed, json.int)),
-    #("eta", option_to_json(req.eta, json.int)),
-    #("quality", option_to_json(req.quality, json.string)),
+    #("posterUrl", json.nullable(req.poster_url, json.string)),
+    #("year", json.nullable(req.year, json.int)),
+    #("requestedBy", json.nullable(req.requested_by, json.string)),
+    #("effectiveStatus", json.nullable(req.effective_status, json.string)),
+    #("progress", json.nullable(req.progress, json.float)),
+    #("speed", json.nullable(req.speed, json.int)),
+    #("eta", json.nullable(req.eta, json.int)),
+    #("quality", json.nullable(req.quality, json.string)),
     #("seasons", json.array(req.seasons, season_progress_to_json)),
   ])
 }
@@ -92,18 +92,11 @@ fn season_progress_to_json(season: SeasonProgress) -> Json {
 fn episode_progress_to_json(ep: EpisodeProgress) -> Json {
   json.object([
     #("episodeNumber", json.int(ep.episode_number)),
-    #("title", option_to_json(ep.title, json.string)),
+    #("title", json.nullable(ep.title, json.string)),
     #("progress", json.float(ep.progress)),
     #("speed", json.int(ep.speed)),
     #("eta", json.int(ep.eta)),
-    #("status", option_to_json(ep.status, json.string)),
-    #("quality", option_to_json(ep.quality, json.string)),
+    #("status", json.nullable(ep.status, json.string)),
+    #("quality", json.nullable(ep.quality, json.string)),
   ])
-}
-
-fn option_to_json(opt: Option(a), encoder: fn(a) -> Json) -> Json {
-  case opt {
-    option.Some(value) -> encoder(value)
-    option.None -> json.null()
-  }
 }

@@ -1,54 +1,30 @@
-import api/http_client
+import api/http_client.{type ServiceError}
+import config.{type Service}
 import gleam/dynamic/decode
 import gleam/float
 import gleam/int
-import gleam/json
 import gleam/result
 import gleam/string
-import models/request.{type TorrentInfo, TorrentInfo}
-
-pub type SabnzbdError {
-  HttpError(http_client.HttpError)
-  ParseError(String)
+import models/request.{
+  type Download, type DownloadStatus, Completed, Download, Downloading, NotFound,
+  Paused, Queued, Stalled,
 }
 
 /// Fetch current downloads from SABnzbd queue
-pub fn get_downloads(
-  base_url: String,
-  api_key: String,
-) -> Result(List(TorrentInfo), SabnzbdError) {
-  let url =
-    base_url
-    <> "/api?apikey="
-    <> api_key
-    <> "&mode=queue&output=json"
-
-  let headers = [#("Accept", "application/json")]
-
-  case http_client.get(url, headers) {
-    Ok(body) -> parse_queue_response(body)
-    Error(err) -> Error(HttpError(err))
-  }
-}
-
-fn parse_queue_response(
-  body: String,
-) -> Result(List(TorrentInfo), SabnzbdError) {
+pub fn get_downloads(sabnzbd: Service) -> Result(List(Download), ServiceError) {
   let decoder = {
-    use slots <- decode.field("queue", {
-      use slots <- decode.field("slots", decode.list(slot_decoder()))
-      decode.success(slots)
-    })
+    use slots <- decode.subfield(["queue", "slots"], decode.list(slot_decoder()))
     decode.success(slots)
   }
-
-  case json.parse(body, decoder) {
-    Ok(slots) -> Ok(slots)
-    Error(_) -> Error(ParseError("Failed to parse SABnzbd response"))
-  }
+  http_client.get_json(
+    sabnzbd.url <> "/api?apikey=" <> sabnzbd.api_key <> "&mode=queue&output=json",
+    [#("Accept", "application/json")],
+    decoder,
+    "SABnzbd response",
+  )
 }
 
-fn slot_decoder() -> decode.Decoder(TorrentInfo) {
+fn slot_decoder() -> decode.Decoder(Download) {
   use nzo_id <- decode.field("nzo_id", decode.string)
   use filename <- decode.field("filename", decode.string)
   use percentage <- decode.field("percentage", string_as_float())
@@ -68,15 +44,13 @@ fn slot_decoder() -> decode.Decoder(TorrentInfo) {
     False -> 0
   }
 
-  let normalized_state = normalize_state(status)
-
-  decode.success(TorrentInfo(
-    hash: nzo_id,
+  decode.success(Download(
+    id: nzo_id,
     name: filename,
     progress: progress,
-    dlspeed: dlspeed,
-    eta: eta_seconds,
-    state: normalized_state,
+    speed: dlspeed,
+    eta_seconds: eta_seconds,
+    status: to_download_status(status),
   ))
 }
 
@@ -108,18 +82,19 @@ fn parse_timeleft(timeleft: String) -> Int {
   }
 }
 
-/// Map SABnzbd status strings to qBittorrent-equivalent state strings
-/// so they work with the shared torrent_state_to_download_status converter
-fn normalize_state(status: String) -> String {
+fn to_download_status(status: String) -> DownloadStatus {
   case status {
-    "Downloading" | "Fetching" -> "downloading"
-    "Queued" | "Propagating" -> "queuedDL"
-    "Paused" -> "pausedDL"
-    "Verifying" | "Extracting" | "Repairing" | "QuickCheck" | "Moving" ->
-      "downloading"
-    "Completed" -> "checkingUP"
-    "Failed" -> "stalledDL"
-    _ -> status
+    "Downloading"
+    | "Fetching"
+    | "Verifying"
+    | "Extracting"
+    | "Repairing"
+    | "QuickCheck"
+    | "Moving" -> Downloading
+    "Queued" | "Propagating" -> Queued
+    "Paused" -> Paused
+    "Completed" -> Completed
+    "Failed" -> Stalled
+    _ -> NotFound
   }
 }
-

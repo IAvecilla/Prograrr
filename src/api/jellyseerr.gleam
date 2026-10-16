@@ -1,96 +1,79 @@
-import api/http_client
+import api/http_client.{type ServiceError}
+import config.{type Service}
 import gleam/dynamic/decode
 import gleam/int
-import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/result
 import models/request.{
   type JellyseerrMedia, type JellyseerrRequest, JellyseerrMedia,
   JellyseerrRequest,
 }
 
-pub type JellyseerrError {
-  HttpError(http_client.HttpError)
-  ParseError(String)
-}
-
-/// Fetch all requests from Jellyseerr with full media details
-/// Only enriches non-available requests to reduce API calls
+/// Fetch recent requests from Jellyseerr with full media details.
+/// Only enriches non-available requests to reduce API calls.
 pub fn get_requests(
-  base_url: String,
-  api_key: String,
-) -> Result(List(JellyseerrRequest), JellyseerrError) {
-  let url = base_url <> "/api/v1/request?take=20&skip=0&sort=added"
-  let headers = [#("X-Api-Key", api_key), #("Accept", "application/json")]
-
-  case http_client.get(url, headers) {
-    Ok(body) -> {
-      case parse_requests_response(body) {
-        Ok(requests) -> {
-          let enriched = list.map(requests, fn(req) {
-            case req.status {
-              3 -> req
-              _ -> enrich_request(req, base_url, api_key)
-            }
-          })
-          Ok(enriched)
-        }
-        Error(err) -> Error(err)
-      }
-    }
-    Error(err) -> Error(HttpError(err))
+  jellyseerr: Service,
+) -> Result(List(JellyseerrRequest), ServiceError) {
+  let decoder = {
+    use results <- decode.field("results", decode.list(request_decoder()))
+    decode.success(results)
   }
+  use requests <- result.map(http_client.get_json(
+    jellyseerr.url <> "/api/v1/request?take=20&skip=0&sort=added",
+    headers(jellyseerr),
+    decoder,
+    "Jellyseerr response",
+  ))
+  list.map(requests, fn(req) {
+    case req.status {
+      3 -> req
+      _ -> enrich_request(req, jellyseerr)
+    }
+  })
 }
 
-fn enrich_request(req: JellyseerrRequest, base_url: String, api_key: String) -> JellyseerrRequest {
+fn headers(jellyseerr: Service) -> List(#(String, String)) {
+  [#("X-Api-Key", jellyseerr.api_key), #("Accept", "application/json")]
+}
+
+fn enrich_request(
+  req: JellyseerrRequest,
+  jellyseerr: Service,
+) -> JellyseerrRequest {
   case req.media {
-    Some(media) -> {
-      case media.tmdb_id {
-        Some(tmdb_id) -> {
-          let media_type = case req.media_type {
-            "tv" -> "tv"
-            _ -> "movie"
-          }
-          case get_media_details(base_url, api_key, media_type, tmdb_id) {
-            Ok(details) ->
-              JellyseerrRequest(
-                ..req,
-                media: Some(JellyseerrMedia(
-                  ..details,
-                  tvdb_id: media.tvdb_id,
-                  media_status: media.media_status,
-                )),
-              )
-            Error(_) -> req
-          }
-        }
-        None -> req
+    Some(JellyseerrMedia(tmdb_id: Some(tmdb_id), ..) as media) -> {
+      let media_type = case req.media_type {
+        "tv" -> "tv"
+        _ -> "movie"
+      }
+      let details =
+        http_client.get_json(
+          jellyseerr.url
+            <> "/api/v1/"
+            <> media_type
+            <> "/"
+            <> int.to_string(tmdb_id),
+          headers(jellyseerr),
+          media_details_decoder(tmdb_id),
+          "media details",
+        )
+      case details {
+        Ok(details) ->
+          JellyseerrRequest(
+            ..req,
+            media: Some(
+              JellyseerrMedia(
+                ..details,
+                tvdb_id: media.tvdb_id,
+                media_status: media.media_status,
+              ),
+            ),
+          )
+        Error(_) -> req
       }
     }
-    None -> req
-  }
-}
-
-fn get_media_details(
-  base_url: String,
-  api_key: String,
-  media_type: String,
-  tmdb_id: Int,
-) -> Result(JellyseerrMedia, JellyseerrError) {
-  let url = base_url <> "/api/v1/" <> media_type <> "/" <> int.to_string(tmdb_id)
-  let headers = [#("X-Api-Key", api_key), #("Accept", "application/json")]
-
-  case http_client.get(url, headers) {
-    Ok(body) -> parse_media_details(body, tmdb_id)
-    Error(err) -> Error(HttpError(err))
-  }
-}
-
-fn parse_media_details(body: String, tmdb_id: Int) -> Result(JellyseerrMedia, JellyseerrError) {
-  let decoder = media_details_decoder(tmdb_id)
-  case json.parse(body, decoder) {
-    Ok(media) -> Ok(media)
-    Error(_) -> Error(ParseError("Failed to parse media details"))
+    _ -> req
   }
 }
 
@@ -112,20 +95,6 @@ fn media_details_decoder(tmdb_id: Int) -> decode.Decoder(JellyseerrMedia) {
     release_date: release_date,
     first_air_date: first_air_date,
   ))
-}
-
-fn parse_requests_response(
-  body: String,
-) -> Result(List(JellyseerrRequest), JellyseerrError) {
-  let decoder = {
-    use results <- decode.field("results", decode.list(request_decoder()))
-    decode.success(results)
-  }
-
-  case json.parse(body, decoder) {
-    Ok(requests) -> Ok(requests)
-    Error(_) -> Error(ParseError("Failed to parse Jellyseerr response"))
-  }
 }
 
 fn request_decoder() -> decode.Decoder(JellyseerrRequest) {

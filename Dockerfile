@@ -1,40 +1,27 @@
 # Build stage
 FROM ghcr.io/gleam-lang/gleam:v1.14.0-erlang-alpine AS builder
 
-WORKDIR /app
+WORKDIR /build
 
-# Copy project files
-COPY gleam.toml .
+COPY gleam.toml manifest.toml ./
+RUN gleam deps download
+
 COPY src/ src/
-COPY test/ test/
+RUN gleam export erlang-shipment
 
-# Download dependencies and build
-RUN gleam deps download && gleam build
-
-# Runtime stage - use the gleam image since it has gleam installed
+# Runtime stage: same base image so the Erlang/OTP version matches the build
 FROM ghcr.io/gleam-lang/gleam:v1.14.0-erlang-alpine
 
 WORKDIR /app
 
-# Create non-root user
 RUN adduser -D appuser
 
-# Copy entire project from builder
-COPY --from=builder --chown=appuser /app /app
-
-# Copy static files (JavaScript frontend)
+COPY --from=builder --chown=appuser /build/build/erlang-shipment /app
 COPY --chown=appuser static/ /app/static/
 
-# Set environment defaults
 ENV PORT=3000
-ENV JELLYSEERR_URL=http://localhost:5055
-ENV SONARR_URL=http://localhost:8989
-ENV RADARR_URL=http://localhost:7878
-ENV QBITTORRENT_URL=http://localhost:8080
-
 EXPOSE 3000
 
 USER appuser
 
-# Run the application using gleam run
-CMD ["gleam", "run"]
+CMD ["/app/entrypoint.sh", "run"]

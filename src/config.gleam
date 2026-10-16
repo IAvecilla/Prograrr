@@ -1,82 +1,117 @@
 import envoy
 import gleam/int
+import gleam/option.{type Option, None, Some}
 import gleam/result
 
-/// Application configuration loaded from environment variables
+/// URL + API key pair used by most services
+pub type Service {
+  Service(url: String, api_key: String)
+}
+
+pub type QBittorrent {
+  QBittorrent(url: String, username: String, password: String)
+}
+
+/// Application configuration loaded from environment variables.
+/// Download clients are optional: each one is enabled when its URL is set.
 pub type Config {
   Config(
     port: Int,
-    api_key: String,
-    cors_origin: String,
-    jellyseerr_url: String,
-    jellyseerr_api_key: String,
-    sonarr_url: String,
-    sonarr_api_key: String,
-    radarr_url: String,
-    radarr_api_key: String,
-    qbittorrent_url: String,
-    qbittorrent_username: String,
-    qbittorrent_password: String,
-    sabnzbd_url: String,
-    sabnzbd_api_key: String,
+    /// `None` when auth is disabled with PROGRARR_AUTH=false
+    api_key: Option(String),
+    cors_origin: Option(String),
+    jellyseerr: Service,
+    sonarr: Service,
+    radarr: Service,
+    qbittorrent: Option(QBittorrent),
+    sabnzbd: Option(Service),
   )
 }
 
-/// Load configuration from environment variables
 pub fn load() -> Result(Config, String) {
-  use port <- result.try(get_env_int("PORT", 3000))
-  use api_key <- result.try(get_env_required("PROGRARR_API_KEY"))
-  use cors_origin <- result.try(get_env("CORS_ORIGIN", ""))
-  use jellyseerr_url <- result.try(get_env("JELLYSEERR_URL", "http://localhost:5055"))
-  use jellyseerr_api_key <- result.try(get_env_required("JELLYSEERR_API_KEY"))
-  use sonarr_url <- result.try(get_env("SONARR_URL", "http://localhost:8989"))
-  use sonarr_api_key <- result.try(get_env_required("SONARR_API_KEY"))
-  use radarr_url <- result.try(get_env("RADARR_URL", "http://localhost:7878"))
-  use radarr_api_key <- result.try(get_env_required("RADARR_API_KEY"))
-  use qbittorrent_url <- result.try(get_env("QBITTORRENT_URL", "http://localhost:8080"))
-  use qbittorrent_username <- result.try(get_env_required("QBITTORRENT_USERNAME"))
-  use qbittorrent_password <- result.try(get_env_required("QBITTORRENT_PASSWORD"))
-  use sabnzbd_url <- result.try(get_env("SABNZBD_URL", "http://localhost:8080"))
-  use sabnzbd_api_key <- result.try(get_env("SABNZBD_API_KEY", ""))
+  use port <- result.try(port())
+  use api_key <- result.try(api_key())
+  use jellyseerr <- result.try(service("JELLYSEERR"))
+  use sonarr <- result.try(service("SONARR"))
+  use radarr <- result.try(service("RADARR"))
+  use qbittorrent <- result.try(
+    when_set("QBITTORRENT_URL", fn(url) {
+      use username <- result.try(required("QBITTORRENT_USERNAME"))
+      use password <- result.try(required("QBITTORRENT_PASSWORD"))
+      Ok(QBittorrent(url:, username:, password:))
+    }),
+  )
+  use sabnzbd <- result.try(
+    when_set("SABNZBD_URL", fn(url) {
+      use api_key <- result.try(required("SABNZBD_API_KEY"))
+      Ok(Service(url:, api_key:))
+    }),
+  )
 
-  Ok(Config(
-    port: port,
-    api_key: api_key,
-    cors_origin: cors_origin,
-    jellyseerr_url: jellyseerr_url,
-    jellyseerr_api_key: jellyseerr_api_key,
-    sonarr_url: sonarr_url,
-    sonarr_api_key: sonarr_api_key,
-    radarr_url: radarr_url,
-    radarr_api_key: radarr_api_key,
-    qbittorrent_url: qbittorrent_url,
-    qbittorrent_username: qbittorrent_username,
-    qbittorrent_password: qbittorrent_password,
-    sabnzbd_url: sabnzbd_url,
-    sabnzbd_api_key: sabnzbd_api_key,
-  ))
-}
-
-fn get_env(key: String, default: String) -> Result(String, String) {
-  Ok(result.unwrap(envoy.get(key), default))
-}
-
-fn get_env_required(key: String) -> Result(String, String) {
-  case envoy.get(key) {
-    Ok("") -> Error("Environment variable " <> key <> " cannot be empty")
-    Ok(value) -> Ok(value)
-    Error(_) -> Error("Missing required environment variable: " <> key)
+  case qbittorrent, sabnzbd {
+    None, None ->
+      Error("At least one download client must be configured: set QBITTORRENT_URL or SABNZBD_URL")
+    _, _ ->
+      Ok(Config(
+        port:,
+        api_key:,
+        cors_origin: optional("CORS_ORIGIN"),
+        jellyseerr:,
+        sonarr:,
+        radarr:,
+        qbittorrent:,
+        sabnzbd:,
+      ))
   }
 }
 
-fn get_env_int(key: String, default: Int) -> Result(Int, String) {
+fn api_key() -> Result(Option(String), String) {
+  case optional("PROGRARR_AUTH") {
+    Some("false") -> Ok(None)
+    None | Some("true") -> required("PROGRARR_API_KEY") |> result.map(Some)
+    Some(value) ->
+      Error("Invalid value for PROGRARR_AUTH (expected true or false): " <> value)
+  }
+}
+
+/// Load `<PREFIX>_URL` and `<PREFIX>_API_KEY`, both required
+fn service(prefix: String) -> Result(Service, String) {
+  use url <- result.try(required(prefix <> "_URL"))
+  use api_key <- result.try(required(prefix <> "_API_KEY"))
+  Ok(Service(url:, api_key:))
+}
+
+/// Run `load` only when `key` is set, otherwise the service is disabled
+fn when_set(
+  key: String,
+  load: fn(String) -> Result(a, String),
+) -> Result(Option(a), String) {
+  case optional(key) {
+    Some(value) -> load(value) |> result.map(Some)
+    None -> Ok(None)
+  }
+}
+
+fn port() -> Result(Int, String) {
+  case optional("PORT") {
+    None -> Ok(3000)
+    Some(value) ->
+      int.parse(value)
+      |> result.replace_error("Invalid integer for PORT: " <> value)
+  }
+}
+
+fn required(key: String) -> Result(String, String) {
+  case optional(key) {
+    Some(value) -> Ok(value)
+    None -> Error("Missing required environment variable: " <> key)
+  }
+}
+
+/// Unset and empty variables are both treated as missing
+fn optional(key: String) -> Option(String) {
   case envoy.get(key) {
-    Ok(value) -> {
-      case int.parse(value) {
-        Ok(n) -> Ok(n)
-        Error(_) -> Error("Invalid integer for " <> key <> ": " <> value)
-      }
-    }
-    Error(_) -> Ok(default)
+    Ok("") | Error(_) -> None
+    Ok(value) -> Some(value)
   }
 }

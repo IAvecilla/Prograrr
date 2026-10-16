@@ -1,81 +1,95 @@
+import gleam/dynamic/decode
+import gleam/http as gleam_http
 import gleam/http/request
 import gleam/http/response.{type Response}
 import gleam/httpc
 import gleam/int
-import gleam/http as gleam_http
+import gleam/json
 import gleam/list
 import gleam/option.{type Option}
+import gleam/result
 import gleam/string
 
-pub type HttpError {
+/// Error returned by every service client
+pub type ServiceError {
   RequestFailed(String)
-  InvalidResponse(String)
+  ParseError(String)
+  AuthError(String)
+}
+
+pub fn error_message(err: ServiceError) -> String {
+  case err {
+    RequestFailed(msg) -> "HTTP error: " <> msg
+    ParseError(msg) -> "Parse error: " <> msg
+    AuthError(msg) -> "Auth error: " <> msg
+  }
 }
 
 pub type HttpResponse {
   HttpResponse(body: String, cookie: Option(String))
 }
 
-/// Get the error message from an HttpError
-pub fn error_message(err: HttpError) -> String {
-  case err {
-    RequestFailed(msg) -> msg
-    InvalidResponse(msg) -> msg
-  }
+/// GET a URL and decode its JSON body. `what` names the payload in parse errors.
+pub fn get_json(
+  url: String,
+  headers: List(#(String, String)),
+  decoder: decode.Decoder(a),
+  what: String,
+) -> Result(a, ServiceError) {
+  use body <- result.try(get(url, headers))
+  json.parse(body, decoder)
+  |> result.replace_error(ParseError("Failed to parse " <> what))
 }
 
 /// Make an HTTP GET request
-pub fn get(url: String, headers: List(#(String, String))) -> Result(String, HttpError) {
-  case request.to(url) {
-    Ok(req) -> {
-      let req_with_headers = add_headers(req, headers)
-
-      case httpc.send(req_with_headers) {
-        Ok(resp) -> {
-          case resp.status {
-            200 -> Ok(resp.body)
-            status -> Error(RequestFailed("HTTP " <> int.to_string(status) <> " from " <> sanitize_url(url)))
-          }
-        }
-        Error(_) -> Error(RequestFailed("HTTP request failed to " <> sanitize_url(url)))
-      }
-    }
-    Error(_) -> Error(InvalidResponse("Invalid URL: " <> sanitize_url(url)))
+pub fn get(
+  url: String,
+  headers: List(#(String, String)),
+) -> Result(String, ServiceError) {
+  use req <- result.try(new_request(url))
+  use resp <- result.try(send(add_headers(req, headers), url))
+  case resp.status {
+    200 -> Ok(resp.body)
+    status -> Error(status_error(status, url))
   }
-}
-
-/// Make an HTTP GET request with a cookie
-pub fn get_with_cookie(url: String, headers: List(#(String, String)), cookie: String) -> Result(String, HttpError) {
-  let headers_with_cookie = [#("Cookie", cookie), ..headers]
-  get(url, headers_with_cookie)
 }
 
 /// Make an HTTP POST request and return body + set-cookie header
-pub fn post_with_cookie(url: String, body: String, headers: List(#(String, String))) -> Result(HttpResponse, HttpError) {
-  case request.to(url) {
-    Ok(req) -> {
-      let req_with_body =
-        req
-        |> request.set_method(gleam_http.Post)
-        |> request.set_body(body)
-
-      let req_with_headers = add_headers(req_with_body, headers)
-
-      case httpc.send(req_with_headers) {
-        Ok(resp) -> {
-          case resp.status >= 200 && resp.status < 300 {
-            True -> {
-              let cookie = extract_cookie(resp)
-              Ok(HttpResponse(body: resp.body, cookie: cookie))
-            }
-            False -> Error(RequestFailed("HTTP " <> int.to_string(resp.status) <> " from " <> sanitize_url(url)))
-          }
-        }
-        Error(_) -> Error(RequestFailed("HTTP request failed to " <> sanitize_url(url)))
-      }
-    }
-    Error(_) -> Error(InvalidResponse("Invalid URL: " <> sanitize_url(url)))
+pub fn post_with_cookie(
+  url: String,
+  body: String,
+  headers: List(#(String, String)),
+) -> Result(HttpResponse, ServiceError) {
+  use req <- result.try(new_request(url))
+  let req =
+    req
+    |> request.set_method(gleam_http.Post)
+    |> request.set_body(body)
+    |> add_headers(headers)
+  use resp <- result.try(send(req, url))
+  case resp.status >= 200 && resp.status < 300 {
+    True -> Ok(HttpResponse(body: resp.body, cookie: extract_cookie(resp)))
+    False -> Error(status_error(resp.status, url))
   }
+}
+
+fn new_request(url: String) -> Result(request.Request(String), ServiceError) {
+  request.to(url)
+  |> result.replace_error(RequestFailed("Invalid URL: " <> sanitize_url(url)))
+}
+
+fn send(
+  req: request.Request(String),
+  url: String,
+) -> Result(Response(String), ServiceError) {
+  httpc.send(req)
+  |> result.replace_error(RequestFailed(
+    "HTTP request failed to " <> sanitize_url(url),
+  ))
+}
+
+fn status_error(status: Int, url: String) -> ServiceError {
+  RequestFailed("HTTP " <> int.to_string(status) <> " from " <> sanitize_url(url))
 }
 
 /// Strip query parameters from URLs to avoid leaking secrets (e.g. SABnzbd API key)
@@ -86,7 +100,10 @@ fn sanitize_url(url: String) -> String {
   }
 }
 
-fn add_headers(req: request.Request(String), headers: List(#(String, String))) -> request.Request(String) {
+fn add_headers(
+  req: request.Request(String),
+  headers: List(#(String, String)),
+) -> request.Request(String) {
   list.fold(headers, req, fn(r, header) {
     request.set_header(r, header.0, header.1)
   })

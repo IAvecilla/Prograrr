@@ -10,23 +10,40 @@ let state = {
   error: null,
   activeTab: 'downloading',
   authenticated: false,
+  authRequired: true,
+  loginError: null,
 };
 
-// API key management via sessionStorage
-function getApiKey() {
-  return sessionStorage.getItem('prograrr_api_key') || '';
+// Auth uses an HttpOnly session cookie set by /api/login, so the key is never
+// stored where page scripts can read it.
+let pollTimer = null;
+
+function startPolling() {
+  if (pollTimer) return;
+  fetchRequests();
+  pollTimer = setInterval(fetchRequests, 15000);
 }
 
-function setApiKey(key) {
-  sessionStorage.setItem('prograrr_api_key', key);
+function stopPolling() {
+  clearInterval(pollTimer);
+  pollTimer = null;
 }
 
-function clearApiKey() {
-  sessionStorage.removeItem('prograrr_api_key');
+async function login(apiKey) {
+  const response = await fetch('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ apiKey }),
+  });
+  return response.ok;
 }
 
-function getApiHeaders() {
-  return { 'X-Api-Key': getApiKey() };
+async function logout() {
+  await fetch('/api/logout', { method: 'POST' });
+  stopPolling();
+  state.authenticated = false;
+  state.requests = [];
+  render();
 }
 
 // HTML escaping to prevent XSS when inserting dynamic content into innerHTML
@@ -42,10 +59,10 @@ function esc(str) {
 
 async function fetchRequests() {
   try {
-    const response = await fetch('/api/requests', { headers: getApiHeaders() });
+    const response = await fetch('/api/requests');
     if (response.status === 401) {
+      stopPolling();
       state.authenticated = false;
-      clearApiKey();
       state.loading = false;
       render();
       return;
@@ -235,7 +252,7 @@ function setActiveTab(tab) {
 function render() {
   const app = document.getElementById('app');
 
-  if (!state.authenticated && !getApiKey()) {
+  if (!state.authenticated) {
     app.innerHTML = renderLogin();
     const form = document.getElementById('login-form');
     if (form) {
@@ -243,15 +260,17 @@ function render() {
         e.preventDefault();
         const input = document.getElementById('api-key-input');
         const key = input.value.trim();
-        if (key) {
-          setApiKey(key);
+        if (!key) return;
+        if (await login(key)) {
+          state.authenticated = true;
+          state.loginError = null;
           state.loading = true;
           state.error = null;
           render();
-          await fetchRequests();
-          if (state.authenticated) {
-            setInterval(fetchRequests, 15000);
-          }
+          startPolling();
+        } else {
+          state.loginError = 'Invalid API key';
+          render();
         }
       });
     }
@@ -272,6 +291,9 @@ function render() {
       </main>
     </div>
   `;
+
+  const logoutButton = document.getElementById('logout-button');
+  if (logoutButton) logoutButton.addEventListener('click', logout);
 
   // Attach tab click handlers
   document.querySelectorAll('.tab').forEach(tab => {
@@ -295,7 +317,7 @@ function render() {
 function renderLogin() {
   return `
     <div class="app">
-      ${renderHeader()}
+      ${renderHeader(false)}
       <main class="main">
         <div class="login-container">
           <form id="login-form" class="login-form">
@@ -305,9 +327,10 @@ function renderLogin() {
               id="api-key-input"
               class="login-input"
               placeholder="Enter your Prograrr API key"
-              autocomplete="off"
+              autocomplete="current-password"
               required
             />
+            ${state.loginError ? `<p class="login-error">${esc(state.loginError)}</p>` : ''}
             <button type="submit" class="login-button">Connect</button>
           </form>
         </div>
@@ -316,12 +339,13 @@ function renderLogin() {
   `;
 }
 
-function renderHeader() {
+function renderHeader(showLogout = state.authRequired) {
   return `
     <header class="header">
       <div class="header-content">
         <h1 class="logo">Prograrr</h1>
         <p class="subtitle">Track your download progress</p>
+        ${showLogout ? '<button id="logout-button" class="logout-button" type="button">Log out</button>' : ''}
       </div>
     </header>
   `;
@@ -558,12 +582,19 @@ function renderEpisodeProgress(ep) {
 }
 
 // Init
-function init() {
-  if (getApiKey()) {
-    state.authenticated = true;
+async function init() {
+  try {
+    const response = await fetch('/api/session');
+    const session = await response.json();
+    state.authRequired = session.authRequired;
+    state.authenticated = session.authenticated;
+  } catch (err) {
+    state.error = 'Failed to reach Prograrr';
+  }
+
+  if (state.authenticated) {
     render();
-    fetchRequests();
-    setInterval(fetchRequests, 15000);
+    startPolling();
   } else {
     state.loading = false;
     render();

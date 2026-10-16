@@ -34,32 +34,19 @@ Sonarr/Radarr (queue item with download hash)
 qBittorrent / SABnzbd (real-time progress, speed, ETA)
 ```
 
-Jellyseerr, Sonarr/Radarr, and at least one download client (qBittorrent or SABnzbd) are required to display complete information. SABnzbd is optional and can be used alongside qBittorrent.
+Jellyseerr, Sonarr/Radarr, and at least one download client (qBittorrent or SABnzbd) are required. Both download clients can be used together.
 
 ## Quick Start
 
+Copy `.env.example` to `.env`, fill in your URLs and keys, then:
+
 ```bash
-docker run -d \
-  --name prograrr \
-  -p 3000:3000 \
-  -e PROGRARR_API_KEY=your_prograrr_api_key \
-  -e JELLYSEERR_URL=http://jellyseerr:5055 \
-  -e JELLYSEERR_API_KEY=your_jellyseerr_api_key \
-  -e SONARR_URL=http://sonarr:8989 \
-  -e SONARR_API_KEY=your_sonarr_api_key \
-  -e RADARR_URL=http://radarr:7878 \
-  -e RADARR_API_KEY=your_radarr_api_key \
-  -e QBITTORRENT_URL=http://qbittorrent:8080 \
-  -e QBITTORRENT_USERNAME=your_username \
-  -e QBITTORRENT_PASSWORD=your_password \
-  -e SABNZBD_URL=http://sabnzbd:8080 \
-  -e SABNZBD_API_KEY=your_sabnzbd_api_key \
-  ignacioavecilla/prograrr:latest
+docker run -d --name prograrr -p 3000:3000 --env-file .env ignacioavecilla/prograrr:latest
 ```
 
 ## Docker Compose Integration
 
-Add Prograrr to your existing *arr stack `docker-compose.yml`:
+Add Prograrr to your existing *arr stack `docker-compose.yml`, next to a `.env` file based on `.env.example`:
 
 ```yaml
 services:
@@ -68,21 +55,7 @@ services:
   prograrr:
     image: ignacioavecilla/prograrr:latest
     container_name: prograrr
-    environment:
-      - TZ=America/New_York
-      - PORT=3000
-      - PROGRARR_API_KEY=${PROGRARR_API_KEY}
-      - JELLYSEERR_URL=http://jellyseerr:5055
-      - JELLYSEERR_API_KEY=${JELLYSEERR_API_KEY}
-      - SONARR_URL=http://sonarr:8989
-      - SONARR_API_KEY=${SONARR_API_KEY}
-      - RADARR_URL=http://radarr:7878
-      - RADARR_API_KEY=${RADARR_API_KEY}
-      - QBITTORRENT_URL=http://qbittorrent:8080
-      - QBITTORRENT_USERNAME=${QBITTORRENT_USERNAME}
-      - QBITTORRENT_PASSWORD=${QBITTORRENT_PASSWORD}
-      - SABNZBD_URL=http://sabnzbd:8080
-      - SABNZBD_API_KEY=${SABNZBD_API_KEY}
+    env_file: .env
     ports:
       - "3000:3000"
     restart: unless-stopped
@@ -90,53 +63,58 @@ services:
 
 ### Using with VPN Container (Gluetun)
 
-If your *arr apps run through a VPN container like Gluetun, point the URLs to the VPN container:
+If your *arr apps run through a VPN container like Gluetun, point their URLs at the VPN container in `.env`:
 
-```yaml
-  prograrr:
-    image: ignacioavecilla/prograrr:latest
-    container_name: prograrr
-    environment:
-      - PROGRARR_API_KEY=${PROGRARR_API_KEY}
-      - JELLYSEERR_URL=http://jellyseerr:5055
-      - JELLYSEERR_API_KEY=${JELLYSEERR_API_KEY}
-      - SONARR_URL=http://gluetun:8989
-      - SONARR_API_KEY=${SONARR_API_KEY}
-      - RADARR_URL=http://gluetun:7878
-      - RADARR_API_KEY=${RADARR_API_KEY}
-      - QBITTORRENT_URL=http://gluetun:8080
-      - QBITTORRENT_USERNAME=${QBITTORRENT_USERNAME}
-      - QBITTORRENT_PASSWORD=${QBITTORRENT_PASSWORD}
-    ports:
-      - "3000:3000"
-    restart: unless-stopped
-    networks:
-      - your_media_network
-
-networks:
-  your_media_network:
-    external: true
+```bash
+SONARR_URL=http://gluetun:8989
+RADARR_URL=http://gluetun:7878
+QBITTORRENT_URL=http://gluetun:8080
 ```
 
 ## Environment Variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `PROGRARR_API_KEY` | **Yes** | - | API key to protect all routes (all API requests require `X-Api-Key` header) |
-| `JELLYSEERR_API_KEY` | **Yes** | - | Jellyseerr API key |
-| `SONARR_API_KEY` | **Yes** | - | Sonarr API key |
-| `RADARR_API_KEY` | **Yes** | - | Radarr API key |
-| `QBITTORRENT_USERNAME` | **Yes** | - | qBittorrent username |
-| `QBITTORRENT_PASSWORD` | **Yes** | - | qBittorrent password |
-| `PORT` | No | `3000` | Port the web server listens on |
-| `JELLYSEERR_URL` | No | `http://localhost:5055` | Jellyseerr instance URL |
-| `SONARR_URL` | No | `http://localhost:8989` | Sonarr instance URL |
-| `RADARR_URL` | No | `http://localhost:7878` | Radarr instance URL |
-| `QBITTORRENT_URL` | No | `http://localhost:8080` | qBittorrent Web UI URL |
-| `SABNZBD_URL` | No | `http://localhost:8080` | SABnzbd URL |
-| `SABNZBD_API_KEY` | No | - | SABnzbd API key (leave empty to disable) |
-| `CORS_ORIGIN` | No | `*` (all origins) | Restrict CORS to a specific origin (e.g. `http://localhost:3000`) |
-| `TZ` | No | `UTC` | Timezone |
+Unset and empty values are treated the same. Service URLs have no defaults.
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `PROGRARR_API_KEY` | **Yes**, unless auth is off | Used to log in from the browser, and as the `X-Api-Key` header for API clients |
+| `PROGRARR_AUTH` | No | Set to `false` to disable auth entirely (default `true`). Only do this on a network you trust |
+| `JELLYSEERR_URL`, `JELLYSEERR_API_KEY` | **Yes** | Jellyseerr / Overseerr |
+| `SONARR_URL`, `SONARR_API_KEY` | **Yes** | Sonarr |
+| `RADARR_URL`, `RADARR_API_KEY` | **Yes** | Radarr |
+| `QBITTORRENT_URL`, `QBITTORRENT_USERNAME`, `QBITTORRENT_PASSWORD` | One client | qBittorrent Web UI. Enabled when `QBITTORRENT_URL` is set |
+| `SABNZBD_URL`, `SABNZBD_API_KEY` | One client | SABnzbd. Enabled when `SABNZBD_URL` is set |
+| `PORT` | No | Port the web server listens on (default `3000`) |
+| `CORS_ORIGIN` | No | Allow cross-origin API access from this origin (blocked when unset) |
+| `TZ` | No | Timezone (default `UTC`) |
+
+At least one download client (qBittorrent or SABnzbd) must be configured; both can be used together.
+
+## Accessing Prograrr From Outside Your Home
+
+Prograrr serves plain HTTP. To use it from your phone away from home, put something in front of it that handles encryption, instead of forwarding port 3000 directly.
+
+### Option 1: Tailscale (easiest)
+
+Install [Tailscale](https://tailscale.com/) on the server and on your phone, then open `http://<server-tailscale-name>:3000`. Nothing is exposed to the internet and no ports need forwarding. Since only your devices can reach it, `PROGRARR_AUTH=false` is reasonable here.
+
+### Option 2: A public URL with HTTPS (Caddy)
+
+[Caddy](https://caddyserver.com/) gets and renews an HTTPS certificate automatically. Point a domain at your home IP, forward ports 80 and 443 to Caddy, and use this `Caddyfile`:
+
+```
+prograrr.yourdomain.com {
+    reverse_proxy prograrr:3000
+}
+```
+
+Keep auth enabled (the default) and use a long random `PROGRARR_API_KEY`, for example from `openssl rand -hex 32`.
+
+### Logging in
+
+The web UI asks for `PROGRARR_API_KEY` once. The server then sets a signed session cookie that lasts 30 days. The cookie is `HttpOnly` (page scripts can't read it) and `SameSite=Strict`, and it's marked `Secure` whenever the request came over HTTPS, directly or through a proxy that sends `X-Forwarded-Proto`. Changing `PROGRARR_API_KEY` logs out every browser.
+
+On iOS or Android you can use "Add to Home Screen" to open Prograrr like an app.
 
 ## Getting API Keys
 
@@ -164,14 +142,17 @@ networks:
 
 ## API Endpoints
 
-All API endpoints except `/api/health` require the `X-Api-Key` header matching your `PROGRARR_API_KEY`.
+All data endpoints require either the `X-Api-Key` header matching your `PROGRARR_API_KEY`, or the browser session cookie (unless `PROGRARR_AUTH=false`).
 
 | Endpoint | Description |
 |----------|-------------|
 | `GET /api/requests` | Returns aggregated media requests with download status. Supports `?tmdbId=` filter |
 | `GET /api/overview` | Returns processed, ready-to-render data split into downloading and missing categories |
 | `GET /api/health` | Health check endpoint |
-| `GET /api/debug` | Debug info showing connection status to all services |
+| `GET /api/session` | `{authRequired, authenticated}` for the current request (no auth needed) |
+| `POST /api/login` | Body `{"apiKey": "..."}`. Sets the session cookie on success, `401` otherwise |
+| `POST /api/logout` | Clears the session cookie |
+| `GET /api/debug` | Connection status (ok + item count, error, or disabled) for each service |
 
 ### `GET /api/overview`
 
@@ -257,13 +238,14 @@ Response shape:
 
 Prograrr is designed to never expose your credentials:
 
-- **No credentials in API responses** — API keys and passwords are only used server-side to connect to your services. They are never included in any JSON response.
-- **Mandatory authentication** — All API data endpoints require a valid `X-Api-Key` header. The app will not start without `PROGRARR_API_KEY` set.
-- **Constant-time key comparison** — API key validation uses `gleam/crypto.secure_compare` to prevent timing-based attacks.
-- **Brute force protection** — Failed authentication attempts are delayed by 1 second to limit brute force to ~1 attempt/second.
-- **No secrets in error messages** — Error messages strip query parameters from URLs to prevent leaking credentials (e.g. SABnzbd API keys passed via URL).
-- **No default credentials** — All sensitive values (`PROGRARR_API_KEY`, `QBITTORRENT_USERNAME`, `QBITTORRENT_PASSWORD`, and all API keys) must be explicitly configured. Empty values are rejected.
-- **Configurable CORS** — Set `CORS_ORIGIN` to restrict which origins can call the API. Defaults to `*` (all origins).
+- **No credentials in API responses**: API keys and passwords are only used server-side to connect to your services. They are never included in any JSON response.
+- **Authentication on by default**: All API data endpoints require a valid `X-Api-Key` header or session cookie. The app will not start without `PROGRARR_API_KEY` unless you explicitly set `PROGRARR_AUTH=false`.
+- **Key never stored in the browser**: The web UI exchanges the key for a signed, `HttpOnly` session cookie that page scripts can't read. Sessions expire after 30 days and are invalidated when the key changes.
+- **Constant-time key comparison**: API key validation uses `gleam/crypto.secure_compare` to prevent timing-based attacks.
+- **Brute force protection**: Failed authentication attempts are delayed by 1 second to limit brute force to ~1 attempt/second.
+- **No secrets in error messages**: Error messages strip query parameters from URLs to prevent leaking credentials (e.g. SABnzbd API keys passed via URL).
+- **No default credentials**: All sensitive values (`PROGRARR_API_KEY`, qBittorrent credentials, and all API keys) must be explicitly configured. Empty values are rejected.
+- **Configurable CORS**: Cross-origin requests are blocked unless `CORS_ORIGIN` is set to an allowed origin.
 
 ## Development
 
@@ -293,13 +275,8 @@ direnv allow
 # Install Gleam and Erlang manually, then:
 gleam deps download
 
-# Run locally (set environment variables first)
-export PROGRARR_API_KEY=your_key
-export JELLYSEERR_API_KEY=your_key
-export SONARR_API_KEY=your_key
-export RADARR_API_KEY=your_key
-export QBITTORRENT_USERNAME=your_username
-export QBITTORRENT_PASSWORD=your_password
+# Run locally (copy .env.example to .env and fill it in first)
+set -a; source .env; set +a
 gleam run
 
 # Build Docker image
